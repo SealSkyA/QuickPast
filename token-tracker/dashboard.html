@@ -1,0 +1,252 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token 用量仪表盘</title>
+<style>
+  :root {
+    --bg: #f5f7fb;
+    --card: #ffffff;
+    --ink: #1f2937;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --blue: #3b82f6;
+    --blue-bg: #eff6ff;
+    --green: #10b981;
+    --green-bg: #ecfdf5;
+    --amber: #f59e0b;
+    --amber-bg: #fffbeb;
+    --violet: #8b5cf6;
+    --violet-bg: #f5f3ff;
+    --radius: 12px;
+    --shadow: 0 1px 3px rgba(0,0,0,.08), 0 4px 14px rgba(0,0,0,.05);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif;
+    background: var(--bg); color: var(--ink); padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  header h1 { font-size: 22px; font-weight: 700; letter-spacing: .5px; }
+  header h1 span { color: var(--blue); }
+  header .meta { color: var(--muted); font-size: 13px; }
+  header .meta b { color: var(--ink); font-weight: 600; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 24px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 16px 18px; box-shadow: var(--shadow);
+  }
+  .card .label { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .card .num { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .card .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .card.blue  { border-top: 3px solid var(--blue);   }
+  .card.blue  .num { color: var(--blue); }
+  .card.green { border-top: 3px solid var(--green);  }
+  .card.green .num { color: var(--green); }
+  .card.violet{ border-top: 3px solid var(--violet); }
+  .card.violet .num { color: var(--violet); }
+  .card.amber { border-top: 3px solid var(--amber);  }
+  .card.amber .num { color: var(--amber); }
+
+  section {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 18px 20px; margin-bottom: 20px;
+  }
+  section h2 {
+    font-size: 16px; font-weight: 700; margin-bottom: 4px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  section h2 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); display: inline-block; }
+  section .desc { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+  section h2 .right { margin-left: auto; font-size: 12px; font-weight: 500; color: var(--muted); }
+
+  .legend { display: flex; gap: 18px; font-size: 12px; color: var(--muted); margin-bottom: 10px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .legend .inp { background: var(--blue); }
+  .legend .out { background: var(--green); }
+
+  .day { display: grid; grid-template-columns: 86px 1fr 92px; gap: 10px; align-items: center; margin-bottom: 7px; }
+  .day .d-label { font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+  .day .d-track { height: 22px; background: #f3f4f6; border-radius: 6px; overflow: hidden; display: flex; }
+  .day .d-track .seg-inp { background: var(--blue);   height: 100%; }
+  .day .d-track .seg-out { background: var(--green);  height: 100%; }
+  .day .d-nums { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--ink); text-align: right; white-space: nowrap; }
+  .day .d-nums small { color: var(--muted); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; background: #fafafa; }
+  tbody tr:hover { background: #fafbff; }
+  td .mono { font-variant-numeric: tabular-nums; }
+
+  .table-scroll { max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .table-scroll th { position: sticky; top: 0; z-index: 1; }
+
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .pill.blue  { background: var(--blue-bg);   color: var(--blue); }
+  .pill.green { background: var(--green-bg);  color: var(--green); }
+  .pill.violet{ background: var(--violet-bg); color: var(--violet); }
+
+  footer { color: var(--muted); font-size: 12px; line-height: 1.8; margin-top: 8px; }
+  footer b { color: var(--ink); }
+  .tag { color: #d97706; font-weight: 600; }
+
+  @media (max-width: 640px) {
+    .day { grid-template-columns: 74px 1fr 76px; gap: 6px; }
+    .card .num { font-size: 21px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Token 用量<span>仪表盘</span></h1>
+    <div class="meta">数据采集于 <b id="gen-at">2026-10-16 11:54:17</b> · 数据目录 <b id="data-dir">-</b> · 重新采集后刷新本页即可更新</div>
+  </header>
+
+  <div class="cards" id="cards"></div>
+
+  <section>
+    <h2><span class="dot" style="background:var(--green)"></span>每日趋势<span class="right">最近 <span id="day-count"></span> 天</span></h2>
+    <div class="desc">柱长为当日合计 token（估算）占全部天最大值的比例；蓝色 = 输入（实际），绿色 = 输出（估算）。</div>
+    <div class="legend"><span><i class="inp"></i>输入 token（实际）</span><span><i class="out"></i>输出 token（估算）</span></div>
+    <div id="daily"></div>
+  </section>
+
+  <section>
+    <h2><span class="dot" style="background:var(--violet)"></span>按模型统计</h2>
+    <div class="desc">各模型的使用量汇总。</div>
+    <div class="table-scroll"><table id="model-table"></table></div>
+  </section>
+
+  <section>
+    <h2><span class="dot" style="background:var(--amber)"></span>按会话统计</h2>
+    <div class="desc">每个 OhMyAgent 会话的汇总，最新会话在前。</div>
+    <div class="table-scroll"><table id="session-table"></table></div>
+  </section>
+
+  <section>
+    <h2><span class="dot" style="background:var(--blue)"></span>请求明细<span class="right">共 <span id="detail-count"></span> 条</span></h2>
+    <div class="desc">每条模型请求一行。输入为平台记录的上下文实际 token；输出为文本长度估算（估算口径见页脚）。</div>
+    <div class="table-scroll"><table id="detail-table"></table></div>
+  </section>
+
+  <footer>
+    <b>统计口径说明：</b>
+    ① 输入 token（实际）= 平台在每次请求前记录的 <code>baseline_actual_tokens</code>（即发送给模型的完整上下文，包含历史重复，与 OpenAI 计费口径一致）；
+    ② 输出 token（估算）= 由该次请求产生的全部输出文本（思考 + 正文 + 工具入参）按「中文/全角约 1.5 字符 = 1 token，其余约 4 字符 = 1 token」估算；
+    ③ 合计 token（估算）= 输入（实际）+ 输出（估算）；
+    ④ 标题生成等不落 context_tokens 记录的轻量请求未计入。
+  </footer>
+</div>
+
+<script id="stats-data" type="application/json">{"generated_at":"2026-10-16 11:54:17","data_dir":"C:\\Users\\550414\\AppData\\Roaming\\com.chaitin.baizhi.monkeycode\\ohmyagent","summary":{"requests":34,"input_actual":1315186,"input_estimated":1154219,"output_estimated":34552,"output_chars":131179,"total_estimated":1349738,"tool_calls":53,"sessions":1},"by_day":[{"date":"2026-10-16","requests":34,"input_actual":1315186,"input_estimated":1154219,"output_estimated":34552,"total_estimated":1349738}],"by_model":[{"model":"deepseek-v4-flash","requests":34,"input_actual":1315186,"output_estimated":34552,"total_estimated":1349738}],"by_session":[{"id":"9a9f5174ab4fdaa0ad4240be4dab5456","title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","requests":34,"input_actual":1315186,"input_estimated":1154219,"output_estimated":34552,"total_estimated":1349738,"first_ts":"2026-10-16 11:33:14","last_ts":"2026-10-16 11:54:10"}],"detail":[{"ts":"2026-10-16 11:33:14","date":"2026-10-16","time":"11:33:14","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":10484,"input_estimated":10589,"output_estimated":156,"output_chars":558,"tool_calls":2,"message_count":3,"fingerprint":"dbfe61fc7a921348f46783c73c48ebcea5999f03dfe6a120844724fab4ce80b2"},{"ts":"2026-10-16 11:33:24","date":"2026-10-16","time":"11:33:24","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":10659,"input_estimated":10805,"output_estimated":97,"output_chars":323,"tool_calls":2,"message_count":6,"fingerprint":"dbfe61fc7a921348f46783c73c48ebcea5999f03dfe6a120844724fab4ce80b2"},{"ts":"2026-10-16 11:33:41","date":"2026-10-16","time":"11:33:41","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":11374,"input_estimated":11614,"output_estimated":814,"output_chars":2758,"tool_calls":1,"message_count":9,"fingerprint":"dbfe61fc7a921348f46783c73c48ebcea5999f03dfe6a120844724fab4ce80b2"},{"ts":"2026-10-16 11:34:21","date":"2026-10-16","time":"11:34:21","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":12184,"input_estimated":12267,"output_estimated":403,"output_chars":1477,"tool_calls":2,"message_count":11,"fingerprint":"dbfe61fc7a921348f46783c73c48ebcea5999f03dfe6a120844724fab4ce80b2"},{"ts":"2026-10-16 11:34:26","date":"2026-10-16","time":"11:34:26","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":12456,"input_estimated":12537,"output_estimated":131,"output_chars":521,"tool_calls":2,"message_count":14,"fingerprint":"dbfe61fc7a921348f46783c73c48ebcea5999f03dfe6a120844724fab4ce80b2"},{"ts":"2026-10-16 11:35:06","date":"2026-10-16","time":"11:35:06","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":12666,"input_estimated":12731,"output_estimated":142,"output_chars":515,"tool_calls":1,"message_count":17,"fingerprint":"dbfe61fc7a921348f46783c73c48ebcea5999f03dfe6a120844724fab4ce80b2"},{"ts":"2026-10-16 11:36:56","date":"2026-10-16","time":"11:36:56","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":13054,"input_estimated":13291,"output_estimated":28,"output_chars":112,"tool_calls":1,"message_count":19,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:37:03","date":"2026-10-16","time":"11:37:03","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":13501,"input_estimated":13649,"output_estimated":136,"output_chars":543,"tool_calls":2,"message_count":21,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:37:17","date":"2026-10-16","time":"11:37:17","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":14385,"input_estimated":14421,"output_estimated":167,"output_chars":665,"tool_calls":2,"message_count":24,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:37:30","date":"2026-10-16","time":"11:37:30","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":16688,"input_estimated":16127,"output_estimated":251,"output_chars":936,"tool_calls":2,"message_count":27,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:37:50","date":"2026-10-16","time":"11:37:50","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":21250,"input_estimated":19409,"output_estimated":292,"output_chars":1086,"tool_calls":1,"message_count":30,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:38:00","date":"2026-10-16","time":"11:38:00","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":22769,"input_estimated":20438,"output_estimated":158,"output_chars":574,"tool_calls":1,"message_count":32,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:38:13","date":"2026-10-16","time":"11:38:13","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":23351,"input_estimated":20846,"output_estimated":191,"output_chars":764,"tool_calls":2,"message_count":34,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:38:26","date":"2026-10-16","time":"11:38:26","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":28234,"input_estimated":23913,"output_estimated":142,"output_chars":506,"tool_calls":1,"message_count":37,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:38:48","date":"2026-10-16","time":"11:38:48","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":29900,"input_estimated":25654,"output_estimated":1210,"output_chars":4659,"tool_calls":2,"message_count":39,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:39:04","date":"2026-10-16","time":"11:39:04","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":31139,"input_estimated":26718,"output_estimated":287,"output_chars":1086,"tool_calls":2,"message_count":42,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:39:42","date":"2026-10-16","time":"11:39:42","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":35605,"input_estimated":30218,"output_estimated":2535,"output_chars":9702,"tool_calls":2,"message_count":45,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:39:50","date":"2026-10-16","time":"11:39:50","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":37045,"input_estimated":31289,"output_estimated":207,"output_chars":787,"tool_calls":1,"message_count":48,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:40:25","date":"2026-10-16","time":"11:40:25","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":37910,"input_estimated":32167,"output_estimated":856,"output_chars":3058,"tool_calls":1,"message_count":50,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:44:04","date":"2026-10-16","time":"11:44:04","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":44075,"input_estimated":38297,"output_estimated":5876,"output_chars":22645,"tool_calls":4,"message_count":52,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:44:16","date":"2026-10-16","time":"11:44:16","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":44949,"input_estimated":38759,"output_estimated":265,"output_chars":1059,"tool_calls":2,"message_count":57,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:45:41","date":"2026-10-16","time":"11:45:41","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":52414,"input_estimated":45782,"output_estimated":6526,"output_chars":25459,"tool_calls":1,"message_count":60,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:46:25","date":"2026-10-16","time":"11:46:25","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":57617,"input_estimated":50174,"output_estimated":4592,"output_chars":17459,"tool_calls":1,"message_count":62,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:46:31","date":"2026-10-16","time":"11:46:31","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":58317,"input_estimated":50390,"output_estimated":4184,"output_chars":15887,"tool_calls":3,"message_count":64,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:47:07","date":"2026-10-16","time":"11:47:07","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":62166,"input_estimated":54183,"output_estimated":0,"output_chars":0,"tool_calls":0,"message_count":67,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:47:11","date":"2026-10-16","time":"11:47:11","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":62768,"input_estimated":54389,"output_estimated":57,"output_chars":192,"tool_calls":2,"message_count":69,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:47:28","date":"2026-10-16","time":"11:47:28","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":63632,"input_estimated":55197,"output_estimated":999,"output_chars":2716,"tool_calls":4,"message_count":72,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:47:32","date":"2026-10-16","time":"11:47:32","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":64162,"input_estimated":55393,"output_estimated":0,"output_chars":0,"tool_calls":0,"message_count":75,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:47:37","date":"2026-10-16","time":"11:47:37","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":64328,"input_estimated":55521,"output_estimated":52,"output_chars":205,"tool_calls":1,"message_count":78,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:49:03","date":"2026-10-16","time":"11:49:03","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":67044,"input_estimated":57497,"output_estimated":511,"output_chars":1983,"tool_calls":1,"message_count":80,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:49:20","date":"2026-10-16","time":"11:49:20","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":67299,"input_estimated":57642,"output_estimated":73,"output_chars":266,"tool_calls":1,"message_count":82,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:50:12","date":"2026-10-16","time":"11:50:12","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":69477,"input_estimated":59763,"output_estimated":1878,"output_chars":7440,"tool_calls":1,"message_count":84,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:50:39","date":"2026-10-16","time":"11:50:39","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":70986,"input_estimated":61201,"output_estimated":1285,"output_chars":5034,"tool_calls":1,"message_count":86,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"},{"ts":"2026-10-16 11:54:10","date":"2026-10-16","time":"11:54:10","session_id":"9a9f5174ab4fdaa0ad4240be4dab5456","session_title":"为公司开发一个记录Token使用量的工具","model":"deepseek-v4-flash","input_actual":71298,"input_estimated":61348,"output_estimated":51,"output_chars":204,"tool_calls":1,"message_count":88,"fingerprint":"2ebbde3ac557a881f6c6f4fe96a0a7e3fe843b5beccc1db7954db629ac9a1791"}]}</script>
+<script>
+(function () {
+  'use strict';
+  var DATA;
+  try { DATA = JSON.parse(document.getElementById('stats-data').textContent); }
+  catch (e) { document.body.innerHTML = '<p style="padding:40px;color:#b91c1c">统计数据解析失败：' + e.message + '，请重新运行 collect.ps1。</p>'; return; }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function fmt(n) {
+    n = Number(n) || 0;
+    return n.toLocaleString('en-US');
+  }
+  function pct(n, max) { return max > 0 ? Math.round(n / max * 100) : 0; }
+
+  var S = DATA.summary || {};
+  document.getElementById('gen-at').textContent = DATA.generated_at || '';
+  document.getElementById('data-dir').textContent = DATA.data_dir || '';
+
+  // ---------- 汇总卡片 ----------
+  var cards = [
+    { cls: 'blue',   label: '请求次数',         num: fmt(S.requests),          sub: 'context_tokens 记录数' },
+    { cls: 'blue',   label: '累计输入 token',   num: fmt(S.input_actual),       sub: '实际，含上下文重复（' + fmt(S.input_estimated) + ' 估算）' },
+    { cls: 'green',  label: '累计输出 token',   num: fmt(S.output_estimated),   sub: '估算 · 输出字符 ' + fmt(S.output_chars) },
+    { cls: 'violet', label: '合计 token',       num: fmt(S.total_estimated),    sub: '输入(实际) + 输出(估算)' },
+    { cls: 'amber',  label: '工具调用次数',     num: fmt(S.tool_calls),         sub: '会话数 ' + fmt(S.sessions) }
+  ];
+  document.getElementById('cards').innerHTML = cards.map(function (c) {
+    return '<div class="card ' + c.cls + '"><div class="label">' + esc(c.label) + '</div>' +
+           '<div class="num">' + esc(c.num) + '</div><div class="sub">' + esc(c.sub) + '</div></div>';
+  }).join('');
+
+  // ---------- 每日趋势 ----------
+  var days = (DATA.by_day || []).slice();
+  var maxTotal = days.reduce(function (m, d) { return Math.max(m, d.total_estimated || 0); }, 0);
+  document.getElementById('day-count').textContent = days.length;
+  var showDays = days.length > 14 ? days.slice(days.length - 14) : days;
+  var html = showDays.map(function (d) {
+    var wInp = pct(d.input_actual || 0, maxTotal);
+    var wOut = pct(d.output_estimated || 0, maxTotal);
+    var title = d.date + '：输入 ' + fmt(d.input_actual) + ' · 输出 ' + fmt(d.output_estimated) + ' · 请求 ' + d.requests;
+    return '<div class="day" title="' + esc(title) + '">' +
+           '<div class="d-label">' + esc(d.date.slice(5)) + '</div>' +
+           '<div class="d-track"><div class="seg-inp" style="width:' + wInp + '%"></div>' +
+           '<div class="seg-out" style="width:' + wOut + '%"></div></div>' +
+           '<div class="d-nums">' + fmt((d.input_actual || 0) + (d.output_estimated || 0)) + ' <small>· ' + d.requests + ' 次</small></div></div>';
+  }).join('');
+  document.getElementById('daily').innerHTML = html || '<p style="color:var(--muted)">暂无数据</p>';
+
+  // ---------- 表格渲染 ----------
+  function renderTable(el, head, rows) {
+    var h = '<thead><tr>' + head.map(function (c) { return '<th>' + esc(c) + '</th>'; }).join('') + '</tr></thead>';
+    var b = '<tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody>';
+    el.innerHTML = h + b;
+  }
+
+  var models = (DATA.by_model || []).map(function (m) {
+    return [
+      '<span class="pill violet">' + esc(m.model) + '</span>',
+      '<span class="mono">' + fmt(m.requests) + '</span>',
+      '<span class="mono">' + fmt(m.input_actual) + '</span>',
+      '<span class="mono">' + fmt(m.output_estimated) + '</span>',
+      '<span class="mono">' + fmt(m.total_estimated) + '</span>'
+    ];
+  });
+  renderTable(document.getElementById('model-table'),
+    ['模型', '请求次数', '输入 token(实际)', '输出 token(估算)', '合计(估算)'], models);
+
+  var sessions = (DATA.by_session || []).map(function (s) {
+    return [
+      '<span class="mono" title="' + esc(s.id) + '">' + esc(s.id.slice(0, 12)) + '…</span>',
+      esc(s.title),
+      '<span class="mono">' + fmt(s.requests) + '</span>',
+      '<span class="mono">' + fmt(s.input_actual) + '</span>',
+      '<span class="mono">' + fmt(s.output_estimated) + '</span>',
+      '<span class="mono">' + fmt(s.total_estimated) + '</span>',
+      esc(String(s.first_ts).slice(0, 16)) + '<br><span style="color:var(--muted)">' + esc(String(s.last_ts).slice(0, 16)) + '</span>'
+    ];
+  });
+  renderTable(document.getElementById('session-table'),
+    ['会话', '标题', '请求次数', '输入(实际)', '输出(估算)', '合计(估算)', '起止时间'], sessions);
+
+  var detail = (DATA.detail || []).slice().reverse();
+  document.getElementById('detail-count').textContent = detail.length;
+  var rows = detail.map(function (d) {
+    return [
+      esc(d.time),
+      '<span class="mono" title="' + esc(d.session_title) + '">' + esc(d.session_id.slice(0, 8)) + '…</span>',
+      esc(d.model),
+      '<span class="mono">' + fmt(d.input_actual) + '</span>',
+      '<span class="mono">' + fmt(d.output_estimated) + '</span>',
+      '<span class="mono">' + fmt(d.tool_calls) + '</span>',
+      '<span class="mono">' + fmt(d.message_count) + '</span>'
+    ];
+  });
+  renderTable(document.getElementById('detail-table'),
+    ['时间', '会话', '模型', '输入 token(实际)', '输出 token(估算)', '工具调用', '上下文消息数'], rows);
+})();
+</script>
+</body>
+</html>

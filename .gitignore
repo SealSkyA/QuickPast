@@ -1,0 +1,17 @@
+# Rust 构建产物（大目录，勿入库）
+/src-tauri/target/
+
+# 工具/会话目录（本机开发配置，不入库）
+.monkeycode/
+.ohmyagent/
+
+# Windows / 编辑器
+Thumbs.db
+Desktop.ini
+
+# 临时文件
+*.log
+/tools/*.png
+
+# Edge 调试临时用户数据目录
+/tools/edge-tmp/

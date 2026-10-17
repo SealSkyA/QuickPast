@@ -1,0 +1,6 @@
+# 开发机无 MSVC 链接器时的编译配置（GNU 工具链 + rust-lld 自包含链接）。
+# 采用理由：本机非管理员、VS Build Tools 未装；GNU 自包含链接完全离线可用。
+# 若日后安装 VS Build Tools，可改用默认的 msvc 工具链（本配置仅作用于 gnu target，互不干扰）。
+[target.x86_64-pc-windows-gnu]
+linker = "C:\\Users\\550414\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\lib\\rustlib\\x86_64-pc-windows-msvc\\bin\\rust-lld.exe"
+rustflags = ["-C", "link-self-contained=yes", "-C", "target-feature=+crt-static", "-L", "E:\\2Monkcode\\toolchains\\mingw-imports", "-C", "link-arg=-lucrtbase"]
