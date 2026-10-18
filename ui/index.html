@@ -144,6 +144,7 @@ input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-
 .qcard.edit .chk input:focus-visible+i{box-shadow:var(--in),inset 0 0 0 2px rgba(77,111,164,.3)}
 .qcard img.cimg{width:56px;height:36px;border-radius:10px;object-fit:cover;box-shadow:var(--in-sm);flex:none}
 .qcard.note .cbody{border-left:3px solid var(--warn);opacity:.9;padding-left:8px}
+.qcard.note .cico{cursor:pointer}
 .footerbar{position:fixed;left:0;right:0;bottom:0;z-index:50;
   display:flex;align-items:center;justify-content:center;gap:16px;height:32px;padding:0 14px;
   border-top:1px solid rgba(192,199,210,.65);
@@ -621,6 +622,17 @@ button:disabled{opacity:.45;box-shadow:none}
   </div>
 </div>
 
+<div class="modal" id="m-note-detail">
+  <h4><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>便签详情</h4>
+  <div class="mhint" id="noteMeta"></div>
+  <textarea id="noteDetailBody" readonly style="width:100%;height:180px;box-sizing:border-box;resize:none;border:none;border-radius:12px;background:var(--bg);box-shadow:var(--in);padding:11px 13px;font-size:13px;color:var(--fg);font-family:inherit;outline:none;line-height:1.7;overflow:auto"></textarea>
+  <div style="display:flex;gap:10px;margin-top:14px">
+    <button class="pri" style="flex:1" onclick="copyNoteDetail()">复制</button>
+    <button style="flex:1" id="btnNotePin" onclick="togglePinFromDetail()">置顶</button>
+    <button style="flex:1" onclick="closeModal('m-note-detail')">关闭</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 <div class="badge-pin" id="pinBadge"><svg class="ico" viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>已置顶</div>
 
@@ -827,6 +839,8 @@ function cardIcon(d){
     file:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     note:'<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>'
   };
+  // 便签图标：点击打开详情弹窗（不冒泡到卡片）
+  if(d.cat==='note') return '<div class="cico" title="查看详情" onclick="event.stopPropagation();noteDetail('+d.id+')">'+svg(M.note)+'</div>';
   return '<div class="cico">'+svg(M[d.cat])+'</div>';
 }
 /* 用本地快照生成真实图片缩略图 */
@@ -987,7 +1001,12 @@ function saveNote(){
   if(!body){ toast('便签内容不能为空', true); return; }
   qpInvoke('history_add_note',{body}).then(it=>{
     closeModal('m-note');
-    if(it && typeof it.id === 'number'){ DATA.unshift(it); }
+    if(it && typeof it.id === 'number'){
+      // 去重插入：后端 emit qp:clip 也会插一次（listener 内已去重），这里保持一致避免竞态双插
+      const i = DATA.findIndex(x=>x.id===it.id);
+      if(i>=0) DATA.splice(i,1);
+      DATA.unshift(it);
+    }
     // 若当前不在便签/全部分类，自动切到便签分类以便看到新便签
     if(catNow !== 'all' && catNow !== 'note'){
       const r = document.querySelector('#rail .rail-item[data-cat="note"]');
@@ -997,6 +1016,36 @@ function saveNote(){
     }
     toast('已新建便签');
   }).catch(e=>toast('新建失败：'+(e||'未知错误'), true));
+}
+/* 便签详情弹窗（点击便签图标打开） */
+let _noteDetailId = 0;
+function noteDetail(id){
+  const d = DATA.find(x=>x.id===id); if(!d) return;
+  _noteDetailId = id;
+  document.getElementById('noteDetailBody').value = d.body || d.name || '';
+  document.getElementById('noteMeta').textContent =
+    '创建时间：'+(d.dt||'—')+(d.fav ? ' · 已收藏' : '');
+  document.getElementById('btnNotePin').textContent = d.pin ? '取消置顶' : '置顶';
+  document.getElementById('m-note-detail').classList.add('on');
+  document.getElementById('mask').classList.add('on');
+}
+function copyNoteDetail(){
+  const body = document.getElementById('noteDetailBody').value;
+  qpInvoke('clipboard_set_text',{text:body})
+    .then(()=>toast('已复制便签内容'))
+    .catch(()=>toast('复制失败', true));
+}
+function togglePinFromDetail(){
+  const d = DATA.find(x=>x.id===_noteDetailId); if(!d) return;
+  const set = !d.pin;
+  qpInvoke('history_pin',{id:_noteDetailId, set})
+    .then(()=>{
+      d.pin = set ? Date.now() : null;
+      renderList();
+      document.getElementById('btnNotePin').textContent = set ? '取消置顶' : '置顶';
+      toast(set ? '已置顶' : '已取消置顶');
+    })
+    .catch(e=>toast('操作失败：'+(e||''), true));
 }
 function openCardMenu(ev, id){
   ev.stopPropagation();
@@ -1274,17 +1323,43 @@ function toast(msg, err){
 document.getElementById('mask').onclick=closeAllPopup;
 /* 初始化 */
 renderList(); renderDevs();
+/* 历史载入兜底：Tauri 注入与后端 setup 均存在时序竞态，就绪后载入历史 + 注册剪贴板监听（与适配层去重） */
+(function initHistory(){
+  if(!(window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.event)){
+    setTimeout(initHistory, 100); return;
+  }
+  window.__TAURI__.core.invoke('history_load').then(list => {
+    if(Array.isArray(list) && list.length && typeof DATA !== 'undefined'){ DATA = list; renderList(); }
+    else setTimeout(initHistory, 400); // 后端 setup 未就绪时为空，重试
+  }).catch(()=>{ setTimeout(initHistory, 400); });
+  if(!window.__qpClipBound){
+    window.__qpClipBound = 1;
+    window.__TAURI__.event.listen('qp:clip', e => {
+      const p = e && e.payload;    const it = p && (p.item || p);
+      if (it && typeof it.id === 'number' && typeof DATA !== 'undefined') {
+        if (Array.isArray(p.removed) && p.removed.length) DATA = DATA.filter(x => !p.removed.includes(x.id));
+        const i = DATA.findIndex(x => x.id === it.id);
+        if (i >= 0) DATA.splice(i, 1);
+        DATA.unshift(it); DATA = DATA.slice(0, 600);
+        if (typeof renderList === 'function' && !editMode) renderList();
+      }
+    });
+  }
+})();
 </script>
 <script>
 /* ═══════════ Tauri 桌面适配层（无 Tauri 环境时自动降级为原型演示逻辑） ═══════════ */
-(function () {
-  const T = (window.__TAURI__ && window.__TAURI__.window && window.__TAURI__.core)
-    ? window.__TAURI__ : null;
-  const hasTauri = !!T;
+(function initTauri() {
+  // Tauri 注入时机与页面脚本执行存在竞态：未就绪则轮询等待，避免适配层提前退出
+  if (!(window.__TAURI__ && window.__TAURI__.window && window.__TAURI__.core)) {
+    setTimeout(initTauri, 100);
+    return;
+  }
+  const T = window.__TAURI__;
+  const hasTauri = true;
   // 暴露真实环境标志：前端 window.QP 分支（复制后隐藏/托盘菜单）走真实 IPC
   window.QP = QP;
   const curWin = () => T ? T.window.getCurrentWindow() : null;
-  if (!hasTauri) return;
 
   /* 无边框窗口拖拽区（按钮/标签不触发拖拽） */
   document.querySelectorAll('.titlebar').forEach(el => {
@@ -1350,12 +1425,14 @@ renderList(); renderDevs();
     if (typeof DATA !== 'undefined' && typeof renderList === 'function') { DATA = []; renderList(); }
     if (typeof toast === 'function') toast('已清空历史');
   });
-  /* —— S1：载入剪贴板历史 + 监听新条目 —— */
+  /* —— S1：载入剪贴板历史（兜底 initHistory 已保证非空；此处空数组不覆盖已有数据）+ 监听新条目 —— */
   T.core.invoke('history_load').then(list => {
-    if (Array.isArray(list) && typeof DATA !== 'undefined' && typeof renderList === 'function') {
+    if (Array.isArray(list) && list.length && typeof DATA !== 'undefined' && typeof renderList === 'function') {
       DATA = list; renderList();
     }
   }).catch(() => {});
+  if (window.__qpClipBound) { /* 已在兜底初始化注册，跳过 */ } else {
+    window.__qpClipBound = 1;
   listen('qp:clip', e => {
     const p = e && e.payload;    const it = p && (p.item || p);
     if (it && typeof it.id === 'number' && typeof DATA !== 'undefined') {
@@ -1370,6 +1447,7 @@ renderList(); renderDevs();
       if (typeof toast === 'function' && !editMode) toast(it.cat==='img' ? '已捕获图片' : it.cat==='file' ? '已捕获文件' : '已捕获文本');
     }
   });
+  }
   listen('qp:focus-view', e => {
     if (e && e.payload && e.payload.view && typeof switchTab === 'function') switchTab(e.payload.view);
   });
