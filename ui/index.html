@@ -401,6 +401,9 @@ button:disabled{opacity:.45;box-shadow:none}
         <div class="tbtn" id="btnBatch" onclick="toggleBatch()" title="批量选择">
           <svg class="ico" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12l2 2 4-4"/></svg>
         </div>
+        <div class="tbtn" onclick="openNoteModal()" title="新建便签">
+          <svg class="ico" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>
+        </div>
       </div>
       <div class="batchbar" id="batchbar">
         <span class="bcount" id="bcnt">已选 0 项</span>
@@ -606,6 +609,15 @@ button:disabled{opacity:.45;box-shadow:none}
   <div style="display:flex;gap:10px;margin-top:14px">
     <button class="pri" style="flex:1" onclick="copyOne(currentZoomId)">复制图片</button>
     <button style="flex:1" onclick="closeModal('m-zoom')">关闭</button>
+  </div>
+</div>
+
+<div class="modal" id="m-note">
+  <h4><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>新建便签</h4>
+  <textarea id="noteBody" placeholder="输入便签内容…" style="width:100%;height:120px;box-sizing:border-box;resize:none;border:none;border-radius:12px;background:var(--bg);box-shadow:var(--in);padding:11px 13px;font-size:13px;color:var(--fg);font-family:inherit;outline:none"></textarea>
+  <div style="display:flex;gap:10px;margin-top:14px">
+    <button class="pri" style="flex:1" onclick="saveNote()">保存</button>
+    <button style="flex:1" onclick="closeModal('m-note')">取消</button>
   </div>
 </div>
 
@@ -962,6 +974,29 @@ function editItem(id){
   const v = d.body || d.name || '';
   const nv = prompt('修改内容：', v);
   if(nv!==null){ if(d.cat==='text'||d.cat==='note'){ d.body=nv; qpInvoke('history_edit',{id,body:nv}).catch(()=>{}); } else { d.name=nv; qpInvoke('history_edit',{id,name:nv}).catch(()=>{}); } renderList(); toast('已修改'); }
+}
+/* 新建便签：弹出输入框 → 后端落盘 → 插入列表顶部 */
+function openNoteModal(){
+  document.getElementById('noteBody').value = '';
+  document.getElementById('m-note').classList.add('on');
+  document.getElementById('mask').classList.add('on');
+  setTimeout(()=>document.getElementById('noteBody').focus(), 60);
+}
+function saveNote(){
+  const body = document.getElementById('noteBody').value.trim();
+  if(!body){ toast('便签内容不能为空', true); return; }
+  qpInvoke('history_add_note',{body}).then(it=>{
+    closeModal('m-note');
+    if(it && typeof it.id === 'number'){ DATA.unshift(it); }
+    // 若当前不在便签/全部分类，自动切到便签分类以便看到新便签
+    if(catNow !== 'all' && catNow !== 'note'){
+      const r = document.querySelector('#rail .rail-item[data-cat="note"]');
+      if(r) switchCat(r);
+    } else {
+      renderList();
+    }
+    toast('已新建便签');
+  }).catch(e=>toast('新建失败：'+(e||'未知错误'), true));
 }
 function openCardMenu(ev, id){
   ev.stopPropagation();

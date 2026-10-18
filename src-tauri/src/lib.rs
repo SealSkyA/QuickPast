@@ -85,6 +85,7 @@ pub fn run() {
             history::history_set_fav,
             history::history_pin,
             history::history_edit,
+            history::history_add_note,
             history::clipboard_set_text,
             history::clipboard_set_files,
             history::clipboard_set_img,

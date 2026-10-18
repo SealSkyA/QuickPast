@@ -496,6 +496,38 @@ pub fn history_edit(app: AppHandle, id: u64, body: Option<String>, name: Option<
     save_items(&app, &items);
 }
 
+/// 新建便签（手动创建）：插入顶部并落盘，返回新条目
+#[tauri::command]
+pub fn history_add_note(app: AppHandle, body: String) -> Result<serde_json::Value, String> {
+    let body = body.trim().to_string();
+    if body.is_empty() {
+        return Err("便签内容不能为空".into());
+    }
+    let st = app.state::<History>();
+    let mut items = st.items.lock().unwrap();
+    let it = Item {
+        id: next_id(&items),
+        cat: "note".to_string(),
+        fav: false,
+        dt: now_iso(),
+        body: Some(body.clone()),
+        name: None,
+        res: None,
+        size: None,
+        path: None,
+        pin: None,
+        has_rich: None,
+    };
+    write_text(&app, it.id, &body);
+    items.insert(0, it.clone());
+    items.truncate(LIMIT);
+    let emit_item = it.clone();
+    drop(items);
+    save_items(&app, &st.items.lock().unwrap());
+    let _ = app.emit("qp:clip", emit_item);
+    serde_json::to_value(it).map_err(|e| e.to_string())
+}
+
 /* 复制条目回系统剪贴板 */
 #[tauri::command]
 pub fn clipboard_set_text(text: String) -> Result<(), String> {
