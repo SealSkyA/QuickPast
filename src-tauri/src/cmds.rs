@@ -89,6 +89,100 @@ pub fn qp_window_hide(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/* ────────────── 关于与升级（S6） ────────────── */
+
+/// 关于信息：应用名 / 版本 / 作者 / 升级记录
+#[tauri::command]
+pub fn about_info() -> serde_json::Value {
+    serde_json::json!({
+        "app": "快捷粘贴 QuickPaste",
+        "version": env!("CARGO_PKG_VERSION"),
+        "author": "zhangaiguo",
+        "changelog": [
+            {"v":"0.1.0","log":"初始版本：剪贴板历史、文件传输（LocalSend 协议）、窗口记忆、全局热键"},
+        ],
+    })
+}
+
+/// 找 git 可执行文件（完整路径优先，避免继承 PATH 缺失）
+fn git_exe() -> Result<String, String> {
+    for c in [
+        r"C:\Program Files\Git\bin\git.exe",
+        r"C:\Program Files\Git\cmd\git.exe",
+        "git",
+    ] {
+        if std::process::Command::new(c).arg("--version").output().is_ok() {
+            return Ok(c.to_string());
+        }
+    }
+    Err("未找到 git 命令".into())
+}
+
+/// 语义版本比较：a > b → Greater；返回 -1/0/1
+fn cmp_version(a: &str, b: &str) -> i32 {
+    let num = |s: &str| -> u64 { s.trim_matches(|c: char| !c.is_ascii_digit()).parse().unwrap_or(0) };
+    let av: Vec<u64> = a.split('.').map(num).collect();
+    let bv: Vec<u64> = b.split('.').map(num).collect();
+    for i in 0..av.len().max(bv.len()) {
+        let x = av.get(i).copied().unwrap_or(0);
+        let y = bv.get(i).copied().unwrap_or(0);
+        if x != y { return if x > y { 1 } else { -1 }; }
+    }
+    0
+}
+
+/// 在线更新：git ls-remote 读取远程标签版本，与本地版本比较
+#[tauri::command]
+pub fn qp_check_update() -> Result<serde_json::Value, String> {
+    let remote = "https://github.com/SealSkyA/QuickPast.git";
+    let git = git_exe()?;
+    // 限时执行：10 秒内无响应视为网络异常
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (git2, remote2) = (git.clone(), remote.to_string());
+    std::thread::spawn(move || {
+        let out = std::process::Command::new(&git2)
+            .args(["ls-remote", "--tags", &remote2])
+            .output();
+        let _ = tx.send(out);
+    });
+    let res = rx.recv_timeout(std::time::Duration::from_secs(10))
+        .map_err(|_| "检查更新超时（网络不通或无法访问 git）".to_string())?;
+    let out = res.map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    // 解析 vX.Y.Z 标签，取最大版本
+    let mut latest: Option<String> = None;
+    for line in text.lines() {
+        if let Some(tag) = line.split("refs/tags/").nth(1) {
+            let t = tag.trim();
+            if let Some(v) = t.strip_prefix('v') {
+                if v.split('.').count() >= 2 {
+                    if latest.as_deref().map(|l| cmp_version(v, l) > 0).unwrap_or(true) {
+                        latest = Some(v.to_string());
+                    }
+                }
+            }
+        }
+    }
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    let latest = latest.unwrap_or_else(|| current.clone());
+    serde_json::to_value(serde_json::json!({
+        "current": current,
+        "latest": latest,
+        "hasUpdate": cmp_version(&latest, &current) > 0,
+        "url": "https://github.com/SealSkyA/QuickPast/releases",
+    })).map_err(|e| e.to_string())
+}
+
+/// 用系统默认浏览器打开网址
+#[tauri::command]
+pub fn qp_open_url(url: String) -> Result<(), String> {
+    std::process::Command::new("cmd")
+        .args(["/c", "start", "", &url])
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 /// 最大化 / 还原（标题栏按钮）
 #[tauri::command]
 pub fn qp_window_toggle_max(app: AppHandle) -> Result<(), String> {

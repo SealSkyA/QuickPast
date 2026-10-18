@@ -75,6 +75,9 @@ pub fn run() {
             cmds::qp_set_hotkey,
             cmds::qp_window_hide,
             cmds::qp_window_toggle_max,
+            cmds::about_info,
+            cmds::qp_check_update,
+            cmds::qp_open_url,
             history::history_load,
             history::history_remove,
             history::history_clear,
@@ -204,6 +207,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         &[
             &MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?,
             &MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?,
+            &MenuItem::with_id(app, "about", "关于与升级", true, None::<&str>)?,
             &MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?,
         ],
     )?;
@@ -218,6 +222,10 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             "settings" => {
                 toggle_main(app);
                 let _ = app.emit("qp:open-settings", ());
+            }
+            "about" => {
+                toggle_main(app);
+                let _ = app.emit("qp:open-about", ());
             }
             "quit" => app.exit(0),
             _ => {}
