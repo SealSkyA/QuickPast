@@ -78,6 +78,7 @@ pub fn run() {
             cmds::about_info,
             cmds::qp_check_update,
             cmds::qp_open_url,
+            cmds::qp_show_about,
             history::history_load,
             history::history_remove,
             history::history_clear,
@@ -224,8 +225,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 let _ = app.emit("qp:open-settings", ());
             }
             "about" => {
-                toggle_main(app);
-                let _ = app.emit("qp:open-about", ());
+                let _ = cmds::qp_show_about(app.clone());
             }
             "quit" => app.exit(0),
             _ => {}

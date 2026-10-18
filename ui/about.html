@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>关于与升级 · QuickPaste</title>
+<style>
+/* ═══ 新拟物设计令牌（与主界面一致） ═══ */
+*{margin:0;padding:0;box-sizing:border-box;-webkit-user-select:none;user-select:none}
+html{color-scheme:light}
+body{
+  background:#e9edf2;color:#3c4453;
+  display:flex;flex-direction:column;height:100vh;overflow:hidden;
+  font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;
+}
+:root{
+  --bg:#e9edf2;--lt:#ffffff;--sh:#c0c7d2;--line:#cfd6e0;
+  --fg:#3c4453;--mut:#7f8a9b;--acc:#4d6fa4;--ok:#2f8f6d;--warn:#a5762c;--err:#b3524d;
+  --up:-5px -5px 11px var(--lt), 5px 5px 12px var(--sh);
+  --up-sm:-3px -3px 7px var(--lt), 3px 3px 8px var(--sh);
+  --in:inset -4px -4px 8px var(--lt), inset 4px 4px 9px var(--sh);
+  --in-sm:inset -2px -2px 5px var(--lt), inset 2px 2px 6px var(--sh);
+}
+/* 标题栏（拖拽区） */
+.titlebar{display:flex;align-items:center;gap:9px;padding:14px 16px 10px;flex:none}
+.app-ico{width:32px;height:32px;border-radius:10px;background:var(--bg);flex:none;
+  display:flex;align-items:center;justify-content:center;color:var(--acc);box-shadow:var(--in-sm)}
+.titlebar .name{font-size:14.5px;font-weight:700;color:var(--fg)}
+.iconbtn{width:28px;height:28px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;
+  color:#7f8a9b;background:var(--bg);box-shadow:var(--up-sm);cursor:pointer;transition:.12s}
+.iconbtn:hover{color:var(--fg)}
+.iconbtn:active{box-shadow:var(--in-sm)}
+.iconbtn svg{width:15px;height:15px}
+.iconbtn.close:hover{color:var(--err)}
+/* 内容 */
+.body{margin:0 16px;flex:1;min-height:0;display:flex;flex-direction:column;overflow-y:auto}
+.aw-app{font-size:21px;font-weight:800;color:var(--fg);margin:2px 0 10px;letter-spacing:.3px}
+.aw-line{font-size:13.5px;color:var(--fg);margin:5px 0}
+.aw-line b{color:var(--acc);font-weight:700}
+.aw-t2{font-size:12.5px;color:var(--mut);margin:14px 0 7px;display:flex;align-items:center;gap:8px}
+.aw-t2::after{content:'';flex:1;height:1px;background:var(--line)}
+.aw-log{width:100%;box-sizing:border-box;flex:1;min-height:150px;resize:none;border:none;
+  border-radius:12px;background:var(--bg);box-shadow:var(--in);padding:11px 13px;
+  font-size:12.5px;color:var(--fg);line-height:1.75;outline:none;overflow:auto;-webkit-user-select:text;user-select:text}
+/* 底栏 */
+.foot{display:flex;align-items:center;gap:10px;padding:12px 16px 14px;flex:none}
+button{height:34px;padding:0 18px;border:none;border-radius:12px;font-size:13px;font-weight:600;
+  background:var(--bg);color:var(--fg);cursor:pointer;box-shadow:var(--up-sm);transition:.12s}
+button:hover{box-shadow:var(--up-sm);color:var(--acc)}
+button:active{box-shadow:var(--in-sm)}
+button.pri{background:var(--acc);color:#fff;box-shadow:-3px -3px 7px var(--lt), 3px 3px 8px rgba(77,111,164,.45)}
+button.pri:active{box-shadow:var(--in)}
+/* toast */
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(8px);opacity:0;pointer-events:none;
+  background:#3c4453;color:#fff;font-size:12.5px;padding:8px 16px;border-radius:999px;transition:.18s;z-index:99;
+  box-shadow:0 4px 14px rgba(60,68,83,.35);white-space:nowrap;max-width:80vw;overflow:hidden;text-overflow:ellipsis}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.err{background:var(--err)}
+</style>
+</head>
+<body>
+  <div class="titlebar" data-tauri-drag-region>
+    <div class="app-ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 13h5"/></svg></div>
+    <span class="name" data-tauri-drag-region>关于与升级</span>
+    <span style="flex:1" data-tauri-drag-region></span>
+    <div class="iconbtn" title="最小化" onclick="winMin()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></div>
+    <div class="iconbtn" title="放大 / 还原" onclick="winMax()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></div>
+    <div class="iconbtn close" title="关闭" onclick="closeWin()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></div>
+  </div>
+
+  <div class="body">
+    <div class="aw-app">快捷粘贴 QuickPaste</div>
+    <div class="aw-line">版本：<b id="awVer">…</b></div>
+    <div class="aw-line">作者：<b>zhangaiguo</b></div>
+    <div class="aw-t2">升级记录</div>
+    <textarea class="aw-log" id="awLog" readonly spellcheck="false"></textarea>
+  </div>
+
+  <div class="foot">
+    <button class="pri" style="min-width:104px;flex:none" onclick="checkUpdate()">在线更新</button>
+    <span style="flex:1"></span>
+    <button onclick="closeWin()">关闭</button>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+const { invoke } = window.__TAURI__.core;
+const win = window.__TAURI__.window.getCurrentWindow();
+function toast(msg, err){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.toggle('err', !!err);
+  t.classList.add('on');
+  clearTimeout(t._tm);
+  t._tm = setTimeout(()=>t.classList.remove('on'), 2600);
+}
+function winMin(){ win.minimize().catch(()=>{}); }
+function winMax(){ win.toggleMaximize().catch(()=>{}); }
+function closeWin(){ win.hide().catch(()=>{}); }
+// 载入关于信息
+invoke('about_info').then(info=>{
+  const v = document.getElementById('awVer'); if(v && info) v.textContent = info.version || '';
+  const log = document.getElementById('awLog');
+  if(log && info && Array.isArray(info.changelog)){
+    log.value = info.changelog.map(c => 'v'+(c.v||'')+'    '+(c.log||'')).join('\n');
+  }
+}).catch(()=>{});
+// 在线更新：git 远程 tag 校验
+function checkUpdate(){
+  invoke('qp_check_update')
+    .then(r=>{
+      if(r && r.hasUpdate){
+        toast('发现新版本 v'+r.latest+'（当前 v'+r.current+'）', true);
+        setTimeout(()=>invoke('qp_open_url',{url:r.url}).catch(()=>{}), 1200);
+      } else if(r){
+        toast('当前已是最新版本 v'+(r.latest||r.current||''));
+      }
+    })
+    .catch(e=>toast('检查更新失败：'+(e||'网络异常'), true));
+}
+</script>
+</body>
+</html>

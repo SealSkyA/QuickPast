@@ -183,6 +183,20 @@ pub fn qp_open_url(url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// 显示"关于与升级"独立窗口（tauri.conf 静态声明，启动时已创建，屏幕居中）。
+#[tauri::command]
+pub fn qp_show_about(app: AppHandle) -> Result<(), String> {
+    const ABOUT_LABEL: &str = "about";
+    let w = app
+        .get_webview_window(ABOUT_LABEL)
+        .ok_or_else(|| "about 窗口不存在".to_string())?;
+    let _ = w.unminimize();
+    let _ = w.show();
+    let _ = w.center(); // 每次呼出保持在屏幕中间
+    let _ = w.set_focus();
+    Ok(())
+}
+
 /// 最大化 / 还原（标题栏按钮）
 #[tauri::command]
 pub fn qp_window_toggle_max(app: AppHandle) -> Result<(), String> {

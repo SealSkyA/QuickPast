@@ -20,6 +20,19 @@
         "decorations": false,
         "center": true,
         "visible": true
+      },
+      {
+        "label": "about",
+        "title": "关于与升级",
+        "url": "about.html",
+        "width": 520,
+        "height": 560,
+        "minWidth": 420,
+        "minHeight": 460,
+        "resizable": true,
+        "decorations": false,
+        "center": true,
+        "visible": false
       }
     ],
     "security": {
