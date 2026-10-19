@@ -421,7 +421,31 @@ pub fn spawn_watcher(app: AppHandle) {
 fn poll_once(
     ctx: &clipboard_rs::ClipboardContext,
 ) -> Option<(ClipKey, Item, Option<clipboard_rs::RustImageData>, Option<String>)> {
-    // 文件优先（复制文件时剪贴板也可能带文本路径）
+    // 图片优先：图片有独立分类，不应归入"文件"。复制图片（如微信复制聊天图）时
+    // 剪贴板会同时投递文件路径列表与位图，按图片数据判定才正确。
+    if let Ok(img) = ctx.get_image() {
+        let (w, h) = img.get_size();
+        let raw = img
+            .to_rgba8()
+            .map(|r| r.as_raw().clone())
+            .unwrap_or_default();
+        let key = ClipKey::Img(raw);
+        let size = (w * h * 4) as u64;
+        let name = format!("截图_{}.png", Local::now().format("%Y%m%d_%H%M%S"));
+        return Some((
+            key,
+            Item {
+                cat: "img".into(),
+                name: Some(name),
+                res: Some(format!("{w} × {h}")),
+                size: Some(fmt_size(size)),
+                ..Default::default()
+            },
+            Some(img),
+            None,
+        ));
+    }
+    // 文件（复制文件时剪贴板也可能带文本路径）
     if let Ok(files) = ctx.get_files() {
         if !files.is_empty() {
             let total = files
@@ -445,29 +469,6 @@ fn poll_once(
                 None,
             ));
         }
-    }
-    // 图片
-    if let Ok(img) = ctx.get_image() {
-        let (w, h) = img.get_size();
-        let raw = img
-            .to_rgba8()
-            .map(|r| r.as_raw().clone())
-            .unwrap_or_default();
-        let key = ClipKey::Img(raw);
-        let size = (w * h * 4) as u64;
-        let name = format!("截图_{}.png", Local::now().format("%Y%m%d_%H%M%S"));
-        return Some((
-            key,
-            Item {
-                cat: "img".into(),
-                name: Some(name),
-                res: Some(format!("{w} × {h}")),
-                size: Some(fmt_size(size)),
-                ..Default::default()
-            },
-            Some(img),
-            None,
-        ));
     }
     // 富文本（HTML 格式优先：复制网页/带样式文本时保留格式）
     if let Ok(h) = ctx.get_html() {
