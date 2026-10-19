@@ -304,15 +304,23 @@ fn next_id(items: &[Item]) -> u64 {
 
 /* ────────────── 剪贴板监听线程 ────────────── */
 
+/// 剪贴板访问全局互斥锁：Windows OpenClipboard 在进程内互斥，
+/// watcher 轮询与命令并发访问时会互相阻塞（OpenClipboard 等待对方关闭），
+/// 串行化所有剪贴板读写可避免命令卡死。
+pub static CLIP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn spawn_watcher(app: AppHandle) {
     let mut last: Option<ClipKey> = None;
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(800));
+        // 锁必须在创建 ClipboardContext 之前获取（new() 内部即 OpenClipboard）
+        let _g = CLIP_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let ctx = match clipboard_rs::ClipboardContext::new() {
             Ok(c) => c,
             Err(_) => continue,
         };
         let found = poll_once(&ctx);
+        drop(_g); // 读剪贴板即释放，后续磁盘写入不占锁
         let Some((key, mut it, img, html)) = found else { continue };
         if last.as_ref() == Some(&key) {
             continue; // 内容未变化，去重
@@ -528,6 +536,52 @@ fn fallback_persist_img(app: &AppHandle, id: u64, img: &clipboard_rs::RustImageD
     let _ = rgbaimg.save(img_dir(app).join(format!("{id}.png")));
 }
 
+/// 读取当前系统剪贴板内容（"粘贴板"发送用）：
+/// 文字 → text；图片 → 临时 PNG 文件；文件 → 路径列表。
+/// 判定顺序与剪贴板监听一致：图片优先（复制图片时可能同时带文件路径与位图）。
+#[tauri::command]
+pub fn clip_current() -> Result<serde_json::Value, String> {
+    let _g = CLIP_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let ctx = clipboard_rs::ClipboardContext::new().map_err(|e| e.to_string())?;
+    if let Ok(img) = ctx.get_image() {
+        let (w, h) = img.get_size();
+        let dir = std::env::temp_dir().join("quickpaste-clip");
+        let _ = std::fs::create_dir_all(&dir);
+        let name = format!("剪贴板图片_{}.png", Local::now().format("%Y%m%d_%H%M%S"));
+        let path = dir.join(&name);
+        let ps = path.to_string_lossy().to_string();
+        let save_ok = img.save_to_path(&ps).is_ok()
+            || fallback_save_clip_png(&img, &ps);
+        if save_ok {
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            return Ok(serde_json::json!({
+                "cat": "img", "path": ps, "name": name,
+                "size": size, "res": format!("{w} × {h}")
+            }));
+        }
+    }
+    if let Ok(files) = ctx.get_files() {
+        if !files.is_empty() {
+            return Ok(serde_json::json!({"cat": "file", "paths": files}));
+        }
+    }
+    if let Ok(t) = ctx.get_text() {
+        if !t.trim().is_empty() {
+            return Ok(serde_json::json!({"cat": "text", "text": t}));
+        }
+    }
+    Ok(serde_json::json!({"cat": "none"}))
+}
+
+/// 剪贴板图片保存降级：RGBA8 重编码 PNG
+fn fallback_save_clip_png(img: &clipboard_rs::RustImageData, path: &str) -> bool {
+    let Ok(rgba) = img.to_rgba8() else { return false };
+    let (w, h) = (rgba.width(), rgba.height());
+    let raw = rgba.into_raw();
+    let Some(rgbaimg) = image::RgbaImage::from_raw(w, h, raw) else { return false };
+    rgbaimg.save(path).is_ok()
+}
+
 /* ────────────── IPC 命令 ────────────── */
 
 #[tauri::command]
@@ -664,6 +718,7 @@ fn mark_copied(app: &AppHandle, key: ClipKey) {
 #[tauri::command]
 pub fn clipboard_set_text(app: AppHandle, text: String) -> Result<(), String> {
     mark_copied(&app, ClipKey::Text(text.clone()));
+    let _g = CLIP_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let ctx = clipboard_rs::ClipboardContext::new().map_err(|e| e.to_string())?;
     ctx.set_text(text).map_err(|e| e.to_string())
 }
@@ -680,6 +735,7 @@ pub fn history_copy_rich(app: AppHandle, id: u64) -> Result<(), String> {
     drop(items);
     mark_copied(&app, ClipKey::Text(plain.clone()));
     let html = std::fs::read_to_string(text_dir(&app).join(format!("{id}.html"))).ok();
+    let _g = CLIP_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let ctx = clipboard_rs::ClipboardContext::new().map_err(|e| e.to_string())?;
     match html {
         Some(h) if !h.trim().is_empty() => {
@@ -709,6 +765,7 @@ pub fn clipboard_set_files(app: AppHandle, id: u64) -> Result<(), String> {
         .collect();
     drop(items);
     mark_copied(&app, ClipKey::Files(paths.clone()));
+    let _g = CLIP_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let ctx = clipboard_rs::ClipboardContext::new().map_err(|e| e.to_string())?;
     ctx.set_files(paths).map_err(|e| e.to_string())
 }
@@ -727,6 +784,7 @@ pub fn clipboard_set_img(app: AppHandle, id: u64) -> Result<(), String> {
     if let Ok(r) = img.to_rgba8() {
         mark_copied(&app, ClipKey::Img(r.as_raw().clone()));
     }
+    let _g = CLIP_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let ctx = clipboard_rs::ClipboardContext::new().map_err(|e| e.to_string())?;
     ctx.set_image(img).map_err(|e| e.to_string())
 }
@@ -880,6 +938,7 @@ fn base64(b: &[u8]) -> String {
 /// 调试：向剪贴板写入文本（用于无人工测试验证监听链路）
 #[tauri::command]
 pub fn qp_debug_clip_set_text(text: String) -> Result<(), String> {
+    let _g = CLIP_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let ctx = clipboard_rs::ClipboardContext::new().map_err(|e| e.to_string())?;
     ctx.set_text(text).map_err(|e| e.to_string())
 }
@@ -887,6 +946,7 @@ pub fn qp_debug_clip_set_text(text: String) -> Result<(), String> {
 /// 调试：读取剪贴板 HTML（验证富文本回放链路）
 #[tauri::command]
 pub fn qp_debug_clip_get_html() -> Result<String, String> {
+    let _g = CLIP_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let ctx = clipboard_rs::ClipboardContext::new().map_err(|e| e.to_string())?;
     ctx.get_html().map_err(|e| e.to_string())
 }
@@ -897,6 +957,7 @@ pub fn qp_debug_clip_set_html(html: String) -> Result<(), String> {
     let plain = html.replace("<b>", "").replace("</b>", "")
         .replace("<i>", "").replace("</i>", "")
         .replace("<br>", "\n").replace("<br/>", "\n").replace("&amp;", "&");
+    let _g = CLIP_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let ctx = clipboard_rs::ClipboardContext::new().map_err(|e| e.to_string())?;
     ctx.set(vec![
         clipboard_rs::ClipboardContent::Html(html),

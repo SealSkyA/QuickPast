@@ -118,6 +118,7 @@ pub fn run() {
             history::clip_img_b64,
             history::clip_img_path,
             history::clip_img_full,
+            history::clip_current,
             history::qp_debug_clip_set_text,
             history::qp_debug_clip_set_html,
             history::qp_debug_clip_get_html,

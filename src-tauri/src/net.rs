@@ -709,6 +709,7 @@ fn handle_upload(app: AppHandle, mut req: tiny_http::Request, url: &str) {
             }
         }
         let text = String::from_utf8_lossy(&content).to_string();
+        let _g = crate::history::CLIP_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         match clipboard_rs::ClipboardContext::new() {
             Ok(c) => match c.set_text(text.clone()) {
                 Ok(()) => {}
@@ -716,6 +717,7 @@ fn handle_upload(app: AppHandle, mut req: tiny_http::Request, url: &str) {
             },
             Err(e) => log(&format!("收到文本但无法打开剪贴板: {e}")),
         }
+        drop(_g);
         f.state = "Finished".into();
         f.path = None;
         respond(&app, req, 200, "text/plain", Vec::new());

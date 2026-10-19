@@ -1245,7 +1245,32 @@ function pickType(el,name){
     inp.click();
     return;
   }
+  if(name==='粘贴板'){
+    clipToSend();
+    return;
+  }
   openSendTextModal(name);
+}
+function clipToSend(){
+  qpInvoke('clip_current').then(r=>{
+    if(!r || r.cat==='none') return toast('剪贴板为空，请先复制内容再试', true);
+    if(r.cat==='text'){
+      if(SEL.some(s=>s.type==='text')) return toast('已有一份文本待发送，请先发送或清空', true);
+      const t = r.text || '';
+      SEL.push({type:'text', content:t, name:(t.length>34? t.slice(0,34)+'…' : t)||'(空文本)', size:'粘贴板'});
+      renderSel();
+      toast('已读取剪贴板文本，发送后对方可直接粘贴');
+    }else if(r.cat==='img'){
+      SEL.push({type:'file', path:r.path, name:r.name, size:fmtSize(r.size||0)});
+      renderSel();
+      toast('已读取剪贴板图片，将直接传输给对端');
+    }else if(r.cat==='file'){
+      let n=0;
+      (r.paths||[]).forEach(p=>{ if(!SEL.some(s=>s.path===p)){ SEL.push({type:'file', path:p, name:(p.split(/[\\/]/).pop()||p), size:''}); n++; } });
+      renderSel();
+      toast(n? '已读取剪贴板 '+n+' 个文件，将直接传输给对端' : '这些文件已在待发送列表');
+    }
+  }).catch(e=>toast('读取剪贴板失败：'+e, true));
 }
 let sendTextType='文本';
 function openSendTextModal(name){
