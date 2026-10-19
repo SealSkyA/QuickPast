@@ -972,7 +972,7 @@ function cardMenuAction(id, act){
   else if(act==='置顶') pinOne(id);
   else if(act==='取消置顶') unpinOne(id);
   else if(act==='删除') delOne(id);
-  else if(act==='修改'){ editItem(id); }
+  else if(act==='修改'){ closeAllPopup(); editItem(id); return; }
   else if(act==='打开文件位置'){ openFileLocation(id); }
   else toast(act+'（待实施）');
   closeAllPopup();
