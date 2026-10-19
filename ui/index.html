@@ -633,6 +633,16 @@ button:disabled{opacity:.45;box-shadow:none}
   </div>
 </div>
 
+<div class="modal" id="m-edit">
+  <h4><svg class="ico" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>修改内容</h4>
+  <div class="mhint" id="editHint"></div>
+  <textarea id="editBody" style="width:100%;height:150px;box-sizing:border-box;resize:none;border:none;border-radius:12px;background:var(--bg);box-shadow:var(--in);padding:11px 13px;font-size:13px;color:var(--fg);font-family:inherit;outline:none;line-height:1.7;overflow:auto"></textarea>
+  <div style="display:flex;gap:10px;margin-top:14px">
+    <button class="pri" style="flex:1" onclick="saveEdit()">保存</button>
+    <button style="flex:1" onclick="closeModal('m-edit')">取消</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 <div class="badge-pin" id="pinBadge"><svg class="ico" viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>已置顶</div>
 
@@ -963,6 +973,7 @@ function cardMenuAction(id, act){
   else if(act==='取消置顶') unpinOne(id);
   else if(act==='删除') delOne(id);
   else if(act==='修改'){ editItem(id); }
+  else if(act==='打开文件位置'){ openFileLocation(id); }
   else toast(act+'（待实施）');
   closeAllPopup();
 }
@@ -983,11 +994,34 @@ function sendImage(id){
     toast('已预选图片，请选择目标设备');
   }).catch(()=>toast('无法发送该图片'));
 }
+let _editId = 0;
 function editItem(id){
   const d=DATA.find(x=>x.id===id); if(!d)return;
-  const v = d.body || d.name || '';
-  const nv = prompt('修改内容：', v);
-  if(nv!==null){ if(d.cat==='text'||d.cat==='note'){ d.body=nv; qpInvoke('history_edit',{id,body:nv}).catch(()=>{}); } else { d.name=nv; qpInvoke('history_edit',{id,name:nv}).catch(()=>{}); } renderList(); toast('已修改'); }
+  _editId = id;
+  const isBody = d.cat==='text'||d.cat==='note';
+  document.getElementById('editHint').textContent = isBody ? '修改文本内容' : '修改名称';
+  document.getElementById('editBody').value = d.body || d.name || '';
+  document.getElementById('m-edit').classList.add('on');
+  document.getElementById('mask').classList.add('on');
+  setTimeout(()=>{ const t=document.getElementById('editBody'); t.focus(); t.select(); },60);
+}
+function saveEdit(){
+  const d = DATA.find(x=>x.id===_editId); if(!d){ closeModal('m-edit'); return; }
+  const nv = document.getElementById('editBody').value;
+  if(d.cat==='text'||d.cat==='note'){ d.body=nv; qpInvoke('history_edit',{id:_editId,body:nv}).catch(()=>{}); }
+  else { d.name=nv; qpInvoke('history_edit',{id:_editId,name:nv}).catch(()=>{}); }
+  renderList(); closeModal('m-edit'); toast('已修改');
+}
+/* 打开文件所在文件夹（右键菜单“打开文件位置”） */
+function openFileLocation(id){
+  const d = DATA.find(x=>x.id===id); if(!d) return;
+  const p = (d.path||'').split('|')[0];
+  if(!p){ toast('该文件无路径信息', true); return; }
+  const i = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
+  const dir = i > 0 ? p.slice(0, i) : p;
+  qpInvoke('open_path',{path:dir})
+    .then(()=>toast('已打开所在文件夹'))
+    .catch(()=>toast('打开失败', true));
 }
 /* 新建便签：弹出输入框 → 后端落盘 → 插入列表顶部 */
 function openNoteModal(){
