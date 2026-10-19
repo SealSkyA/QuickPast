@@ -103,6 +103,8 @@ pub struct Item {
     pub pin: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_rich: Option<bool>, // 剪贴板带 HTML 格式（复制为格式时用）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_copy: Option<bool>, // 最近一次复制的条目（列表图标标记为应用图标黄色）
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -231,6 +233,31 @@ fn save_items(app: &AppHandle, items: &[Item]) {
     }
 }
 
+/// 把"上次复制"标记设到指定条目（其余条目清空标记），持久化并通知前端渲染
+pub fn mark_last_copy(app: &AppHandle, id: u64) {
+    let st = app.state::<History>();
+    let mut items = st.items.lock().unwrap();
+    let mut changed = false;
+    for i in items.iter_mut() {
+        let want = Some(i.id == id);
+        if i.last_copy != want {
+            i.last_copy = want;
+            changed = true;
+        }
+    }
+    drop(items);
+    if changed {
+        save_items(app, &st.items.lock().unwrap());
+    }
+    let _ = app.emit("qp:clip", serde_json::json!({ "markId": id }));
+}
+
+/// 标记"上次复制"的条目（点击历史条目复制成功后由前端调用）
+#[tauri::command]
+pub fn history_mark_last(app: AppHandle, id: u64) {
+    mark_last_copy(&app, id);
+}
+
 /// 把文本内容写入 text/{id}.txt（body 不再存于索引，按类分文件夹）
 fn write_text(app: &AppHandle, id: u64, body: &str) {
     let p = text_dir(app).join(format!("{id}.txt"));
@@ -314,13 +341,16 @@ pub fn spawn_watcher(app: AppHandle) {
                     }
                     true
                 });
-                items.insert(0, dup.clone());
+                // 保持原位置：复制已存在的条目不再置顶，仅更新时间并打上"上次复制"标记
+                let ins = pos.min(items.len());
+                items.insert(ins, dup.clone());
                 drop(items);
                 for rid in &removed {
                     let _ = std::fs::remove_file(text_dir(&app).join(format!("{rid}.txt")));
                     let _ = std::fs::remove_file(text_dir(&app).join(format!("{rid}.html")));
                 }
                 save_items(&app, &st.items.lock().unwrap());
+                mark_last_copy(&app, dup.id);
                 let _ = app.emit(
                     "qp:clip",
                     serde_json::json!({ "item": dup, "removed": removed }),
@@ -364,11 +394,13 @@ pub fn spawn_watcher(app: AppHandle) {
             }
             _ => {}
         }
-        let emit_item = items[0].clone();
+        let mut emit_item = items[0].clone();
+        emit_item.last_copy = Some(true); // 系统新复制的条目 = 上次复制
         drop(items);
         save_items(&app, &st.items.lock().unwrap());
         // 类别数量上限：超出时删除最早的一条，并通知前端同步移除
         let pruned = prune_by_limits(&app);
+        mark_last_copy(&app, emit_item.id);
         let _ = app.emit(
             "qp:clip",
             serde_json::json!({ "item": emit_item, "removed": pruned }),
@@ -591,6 +623,7 @@ pub fn history_add_note(app: AppHandle, body: String) -> Result<serde_json::Valu
         path: None,
         pin: None,
         has_rich: None,
+        last_copy: None,
     };
     write_text(&app, it.id, &body);
     items.insert(0, it.clone());

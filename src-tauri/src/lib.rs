@@ -87,6 +87,7 @@ pub fn run() {
             history::history_edit,
             history::history_add_note,
             history::history_apply_limits,
+            history::history_mark_last,
             history::clipboard_set_text,
             history::clipboard_set_files,
             history::clipboard_set_img,

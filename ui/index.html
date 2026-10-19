@@ -19,7 +19,7 @@ html[data-theme=dark]{color-scheme:dark}
   --bg:#e9edf2; --card:#e9edf2; --card2:#e9edf2;
   --lt:#ffffff; --sh:#c0c7d2; --line:#cfd6e0;
   --fg:#3c4453; --mut:#7f8a9b;
-  --acc:#4d6fa4; --ok:#2f8f6d; --warn:#a5762c; --err:#b3524d;
+  --acc:#4d6fa4; --ok:#2f8f6d; --warn:#a5762c; --err:#b3524d; --last:#f1bc4e;
   --r:16px;
   --up:-5px -5px 11px var(--lt), 5px 5px 12px var(--sh);
   --up-sm:-3px -3px 7px var(--lt), 3px 3px 8px var(--sh);
@@ -31,7 +31,7 @@ html[data-theme=dark]{
   --bg:#1d222b; --card:#1d222b; --card2:#1d222b;
   --lt:#272e39; --sh:#0d1015; --line:#262d38;
   --fg:#d8dee7; --mut:#8b94a5;
-  --acc:#7ea6e0; --ok:#5fbd97; --warn:#d4a35a; --err:#dd7a70;
+  --acc:#7ea6e0; --ok:#5fbd97; --warn:#d4a35a; --err:#dd7a70; --last:#f1bc4e;
   --desk:#15181f;
 }
 body{
@@ -120,6 +120,7 @@ input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-
 .qcard .cico{flex:none;width:34px;height:34px;border-radius:10px;background:var(--card);
   display:flex;align-items:center;justify-content:center;color:var(--acc);
   box-shadow:var(--up-sm);font-size:15px}
+.qcard .cico.marked{color:var(--last)} /* 上次复制的条目：图标标记为应用图标黄色 */
 .qcard .cbody{flex:1;min-width:0;cursor:pointer}
 .qcard .ct{font-size:13px;font-weight:600;line-height:1.3;
   display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;
@@ -837,11 +838,12 @@ function thumbData(seed){
   return 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(s);
 }
 function cardIcon(d){
+  const mk = d.last_copy ? ' marked' : ''; // 上次复制的条目：图标染应用图标黄色
   if(d.cat==='img'){
     // 缩略图：点击放大（不冒泡到复制）；正文区域点击 = 复制
     const thumb = '<img class="cimg" data-img="'+d.id+'" src="'+(d.thumb?d.thumb:thumbData(d.id))+'" onload="fillThumb(this)" onclick="event.stopPropagation();zoomImage('+d.id+')" title="点击放大">';
     return '<div style="display:flex;gap:10px;align-items:center;flex:none">'
-      +'<div class="cico">'+svg('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>')+'</div>'
+      +'<div class="cico'+mk+'">'+svg('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>')+'</div>'
       +thumb+'</div>';
   }
   const M = {
@@ -850,8 +852,8 @@ function cardIcon(d){
     note:'<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>'
   };
   // 便签图标：点击打开详情弹窗（不冒泡到卡片）
-  if(d.cat==='note') return '<div class="cico" title="查看详情" onclick="event.stopPropagation();noteDetail('+d.id+')">'+svg(M.note)+'</div>';
-  return '<div class="cico">'+svg(M[d.cat])+'</div>';
+  if(d.cat==='note') return '<div class="cico'+mk+'" title="查看详情" onclick="event.stopPropagation();noteDetail('+d.id+')">'+svg(M.note)+'</div>';
+  return '<div class="cico'+mk+'">'+svg(M[d.cat])+'</div>';
 }
 /* 用本地快照生成真实图片缩略图 */
 function fillThumb(el){
@@ -958,9 +960,11 @@ function copyOne(id){
     const pinOn=document.getElementById('wPin').classList.contains('on');
     if(!editMode && !pinOn && window.QP){ qpInvoke('qp_window_hide').catch(()=>{}); }
   };
-  if(d.cat==='img'){ qpInvoke('clipboard_set_img',{id}).then(hideAfter).catch(()=>toast('复制失败')); }
-  else if(d.cat==='file'){ qpInvoke('clipboard_set_files',{id}).then(hideAfter).catch(()=>toast('复制失败')); }
-  else { qpInvoke('clipboard_set_text',{text:d.body||''}).then(hideAfter).catch(()=>toast('复制失败')); }
+  // 复制成功后标记该条为"上次复制"（图标染黄；不改变列表位置）
+  const markAndHide=()=>{ qpInvoke('history_mark_last',{id}).catch(()=>{}); hideAfter(); };
+  if(d.cat==='img'){ qpInvoke('clipboard_set_img',{id}).then(markAndHide).catch(()=>toast('复制失败')); }
+  else if(d.cat==='file'){ qpInvoke('clipboard_set_files',{id}).then(markAndHide).catch(()=>toast('复制失败')); }
+  else { qpInvoke('clipboard_set_text',{text:d.body||''}).then(markAndHide).catch(()=>toast('复制失败')); }
   closeAllPopup();
 }
 function cardMenuAction(id, act){
@@ -980,7 +984,7 @@ function cardMenuAction(id, act){
 /* 复制为富文本（HTML 格式；无格式时回退纯文本） */
 function copyRich(id){
   qpInvoke('history_copy_rich',{id})
-    .then(()=>{ const d=DATA.find(x=>x.id===id); toast('已复制'+(d&&d.has_rich?'（含格式）':'（纯文本）')); })
+    .then(()=>{ const d=DATA.find(x=>x.id===id); qpInvoke('history_mark_last',{id}).catch(()=>{}); toast('已复制'+(d&&d.has_rich?'（含格式）':'（纯文本）')); })
     .catch(()=>toast('复制失败'));
 }
 /* 图片发送：切到发送页并预选该图片快照 */
@@ -1369,12 +1373,24 @@ renderList(); renderDevs();
   if(!window.__qpClipBound){
     window.__qpClipBound = 1;
     window.__TAURI__.event.listen('qp:clip', e => {
-      const p = e && e.payload;    const it = p && (p.item || p);
+      const p = e && e.payload;
+      // 仅"上次复制"标记事件：刷新黄色图标标记，不移动任何条目
+      if (p && typeof p.markId === 'number' && typeof DATA !== 'undefined') {
+        DATA.forEach(x => x.last_copy = (x.id === p.markId));
+        if (typeof renderList === 'function' && !editMode) renderList();
+        return;
+      }
+      const it = p && (p.item || p);
       if (it && typeof it.id === 'number' && typeof DATA !== 'undefined') {
         if (Array.isArray(p.removed) && p.removed.length) DATA = DATA.filter(x => !p.removed.includes(x.id));
         const i = DATA.findIndex(x => x.id === it.id);
-        if (i >= 0) DATA.splice(i, 1);
-        DATA.unshift(it); DATA = DATA.slice(0, 600);
+        if (i >= 0) {
+          // 已存在的条目（点击复制/去重）：原位更新，不置顶；保留"上次复制"标记
+          const keepMark = DATA[i].last_copy || it.last_copy;
+          DATA[i] = it; DATA[i].last_copy = keepMark;
+        } else {
+          DATA.unshift(it); DATA = DATA.slice(0, 600); // 新复制的条目：放顶部
+        }
         if (typeof renderList === 'function' && !editMode) renderList();
       }
     });
@@ -1468,15 +1484,25 @@ renderList(); renderDevs();
   if (window.__qpClipBound) { /* 已在兜底初始化注册，跳过 */ } else {
     window.__qpClipBound = 1;
   listen('qp:clip', e => {
-    const p = e && e.payload;    const it = p && (p.item || p);
+    const p = e && e.payload;
+    if (p && typeof p.markId === 'number' && typeof DATA !== 'undefined') {
+      DATA.forEach(x => x.last_copy = (x.id === p.markId));
+      if (typeof renderList === 'function' && !editMode) renderList();
+      return;
+    }
+    const it = p && (p.item || p);
     if (it && typeof it.id === 'number' && typeof DATA !== 'undefined') {
-      // 后端已做历史去重（相同内容仅移顶不新增，并清理其他重复项）
+      // 后端已做历史去重（相同内容仅更新时间与"上次复制"标记，不再置顶）
       if (Array.isArray(p.removed) && p.removed.length) {
         DATA = DATA.filter(x => !p.removed.includes(x.id));
       }
       const i = DATA.findIndex(x => x.id === it.id);
-      if (i >= 0) DATA.splice(i, 1);
-      DATA.unshift(it); DATA = DATA.slice(0, 600);
+      if (i >= 0) {
+        const keepMark = DATA[i].last_copy || it.last_copy;
+        DATA[i] = it; DATA[i].last_copy = keepMark;
+      } else {
+        DATA.unshift(it); DATA = DATA.slice(0, 600);
+      }
       if (typeof renderList === 'function' && !editMode) renderList();
       if (typeof toast === 'function' && !editMode) toast(it.cat==='img' ? '已捕获图片' : it.cat==='file' ? '已捕获文件' : '已捕获文本');
     }
