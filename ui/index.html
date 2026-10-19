@@ -1188,11 +1188,13 @@ function closeAllPopup(){
   document.getElementById('mask').classList.remove('on');
 }
 
-/* Delete 键：批量勾选状态下删除勾选项 */
+/* Delete 键：批量勾选状态下删除勾选项（勾选框是 checkbox，焦点在其上时也允许删除） */
 window.addEventListener('keydown', e => {
   if(e.key === 'Delete' && editMode && picked.length){
     const tag = document.activeElement && document.activeElement.tagName;
-    if(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    const isText = tag === 'TEXTAREA' || tag === 'SELECT'
+      || (tag === 'INPUT' && e.target.type !== 'checkbox');
+    if(isText) return;
     e.preventDefault();
     batchDelete();
   }
