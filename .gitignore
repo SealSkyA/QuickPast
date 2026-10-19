@@ -18,3 +18,7 @@ Desktop.ini
 # token-tracker 运行时数据
 token-tracker/data/
 
+
+# 本地打包产物
+QuickPaste_v*.exe
+
