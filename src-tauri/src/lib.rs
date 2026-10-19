@@ -21,6 +21,9 @@ const GEOM_DEBOUNCE_MS: u64 = 900;
 
 struct AppState {
     geom_saved_at: Mutex<Instant>,
+    /// 用户从历史列表点击复制的内容指纹：watcher 检测到相同内容时
+    /// 不新增、不移动、不去重（保持列表与序号不变），只保留"上次复制"标记
+    last_copied: Mutex<Option<history::ClipKey>>,
 }
 
 impl Default for AppState {
@@ -28,6 +31,7 @@ impl Default for AppState {
         AppState {
             // 初始为“很久以前”，保证启动后的首次窗口事件立即触发保存
             geom_saved_at: Mutex::new(Instant::now() - Duration::from_secs(3600)),
+            last_copied: Mutex::new(None),
         }
     }
 }
@@ -40,7 +44,8 @@ struct HotkeyState {
 impl Default for HotkeyState {
     fn default() -> Self {
         HotkeyState {
-            cur: Mutex::new(Some("Alt+Z".into())),
+            // 初始 None：表示尚未注册任何热键，首次 apply_hotkey 必须真正注册
+            cur: Mutex::new(None),
         }
     }
 }

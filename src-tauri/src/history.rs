@@ -320,6 +320,13 @@ pub fn spawn_watcher(app: AppHandle) {
             continue; // 内容未变化，去重
         }
         last = Some(key.clone());
+        // 用户从历史列表点击复制的内容：不新增、不移动、不去重（列表与序号保持不变）
+        {
+            let st = app.state::<crate::AppState>();
+            if st.last_copied.lock().unwrap().as_ref() == Some(&key) {
+                continue;
+            }
+        }
         // 历史去重：已存在相同内容 → 不新增，仅更新时间并移到顶部，
         // 同时清理同内容的其他重复项（只保留最新这条）
         {
@@ -635,9 +642,15 @@ pub fn history_add_note(app: AppHandle, body: String) -> Result<serde_json::Valu
     serde_json::to_value(it).map_err(|e| e.to_string())
 }
 
-/* 复制条目回系统剪贴板 */
+/* 复制条目回系统剪贴板（记录指纹：watcher 检测到相同内容时不新增不置顶） */
+fn mark_copied(app: &AppHandle, key: ClipKey) {
+    let st = app.state::<crate::AppState>();
+    *st.last_copied.lock().unwrap() = Some(key);
+}
+
 #[tauri::command]
-pub fn clipboard_set_text(text: String) -> Result<(), String> {
+pub fn clipboard_set_text(app: AppHandle, text: String) -> Result<(), String> {
+    mark_copied(&app, ClipKey::Text(text.clone()));
     let ctx = clipboard_rs::ClipboardContext::new().map_err(|e| e.to_string())?;
     ctx.set_text(text).map_err(|e| e.to_string())
 }
@@ -652,6 +665,7 @@ pub fn history_copy_rich(app: AppHandle, id: u64) -> Result<(), String> {
     };
     let plain = it.body.clone().unwrap_or_default();
     drop(items);
+    mark_copied(&app, ClipKey::Text(plain.clone()));
     let html = std::fs::read_to_string(text_dir(&app).join(format!("{id}.html"))).ok();
     let ctx = clipboard_rs::ClipboardContext::new().map_err(|e| e.to_string())?;
     match html {
@@ -680,6 +694,8 @@ pub fn clipboard_set_files(app: AppHandle, id: u64) -> Result<(), String> {
         .split('|')
         .map(|s| s.to_string())
         .collect();
+    drop(items);
+    mark_copied(&app, ClipKey::Files(paths.clone()));
     let ctx = clipboard_rs::ClipboardContext::new().map_err(|e| e.to_string())?;
     ctx.set_files(paths).map_err(|e| e.to_string())
 }
@@ -694,6 +710,10 @@ pub fn clipboard_set_img(app: AppHandle, id: u64) -> Result<(), String> {
     let p = img_dir(&app).join(format!("{id}.png"));
     let img = clipboard_rs::RustImageData::from_path(p.to_str().unwrap_or(""))
         .map_err(|e| e.to_string())?;
+    // 指纹用解码后的 RGBA 字节（与 watcher 检测结果一致）
+    if let Ok(r) = img.to_rgba8() {
+        mark_copied(&app, ClipKey::Img(r.as_raw().clone()));
+    }
     let ctx = clipboard_rs::ClipboardContext::new().map_err(|e| e.to_string())?;
     ctx.set_image(img).map_err(|e| e.to_string())
 }
