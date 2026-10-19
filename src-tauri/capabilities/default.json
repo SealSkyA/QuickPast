@@ -30,6 +30,7 @@
     "core:app:default",
     "core:event:default",
     "autostart:default",
+    "global-shortcut:default",
     "dialog:default"
   ]
 }

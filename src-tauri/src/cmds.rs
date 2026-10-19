@@ -67,6 +67,13 @@ pub fn app_version() -> String {
 
 /// 应用缓存目录（高级设置：查看/清空）
 
+/// 动态修改呼出快捷键（设置页录制后调用）
+#[tauri::command]
+pub fn qp_set_hotkey(app: AppHandle, combo: String) -> Result<(), String> {
+    crate::apply_hotkey(&app, &combo);
+    settings::set_key(&app, "hotkey", Value::String(combo)).map_err(|e| e.to_string())
+}
+
 /// 主窗口隐藏到系统托盘（点 × 不退出应用，任务栏不留；托盘/热键可再呼出）
 #[tauri::command]
 pub fn qp_window_hide(app: AppHandle) -> Result<(), String> {

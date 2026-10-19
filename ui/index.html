@@ -431,6 +431,7 @@ button:disabled{opacity:.45;box-shadow:none}
         </div>
       </div>
       <div class="footerbar" oncontextmenu="footerCtx(event)">
+        <span><b id="hotkeyTxt">Ctrl+Alt+Z</b> 呼出</span><span>·</span>
         <span>单击复制</span><span>·</span>
         <span>右击更多</span><span>·</span>
         <span><b>Delete</b> 删除</span>
@@ -543,6 +544,7 @@ button:disabled{opacity:.45;box-shadow:none}
     <div class="setwrap">
       <div class="set on" id="set-quick">
         <div class="row"><div class="lbl"><b>文字数量上限</b><span>文字历史最多保留的条数，超出删最早</span></div><div class="ctl"><input type="number" id="textLimitSel" value="200" min="50" max="2000"></div></div>
+        <div class="row"><div class="lbl"><b>呼出快捷键</b><span>点击输入框后按下新的组合键录制</span></div><div class="ctl"><input type="text" id="hotkeyInput" value="Ctrl+Alt+Z" placeholder="点击后按组合键" onfocus="hotkeyFocus(this)" onkeydown="hotkeyKeydown(event)" onblur="hotkeyBlur()" style="width:132px;text-align:center;font-family:ui-monospace,monospace"></div></div>
         <div class="row"><div class="lbl"><b>图片数量上限</b><span>图片历史最多保留的条数，超出删最早</span></div><div class="ctl"><input type="number" id="imgLimitSel" value="200" min="20" max="1000"></div></div>
         <div class="row"><div class="lbl"><b>文件数量上限</b><span>文件历史最多保留的条数，超出删最早</span></div><div class="ctl"><input type="number" id="fileLimitSel" value="100" min="20" max="1000"></div></div>
         <div class="row"><div class="lbl"><b>单击行为</b><span>点击历史卡片后的动作</span></div><div class="ctl"><select><option>复制并粘贴</option><option>仅复制至剪切板</option></select></div></div>
@@ -725,6 +727,32 @@ function openTray(show){
   if(!show){ return; }
   setTimeout(()=>showTrayMenu(innerWidth-210, innerHeight-90), 260);
 }
+/* 呼出快捷键：点击输入框进入录制，按下组合键显示 */
+let recHot = false;
+function hotkeyFocus(el){
+  recHot = true;
+  el.value = '按下新的组合键…';
+  el.classList.add('rec');
+}
+function hotkeyKeydown(e){
+  const el = document.getElementById('hotkeyInput');
+  if(!recHot || !el) return;
+  e.preventDefault(); e.stopPropagation();
+  if(e.key === 'Escape'){ el.value='Ctrl+Alt+Z'; recHot=false; el.classList.remove('rec'); el.blur(); return; }
+  if(e.key === 'Enter'){ recHot=false; el.classList.remove('rec'); el.blur();
+    const txt=el.value || 'Ctrl+Alt+Z';
+    const ft=document.getElementById('hotkeyTxt'); if(ft) ft.textContent=txt;
+    qpInvoke('qp_set_hotkey',{combo:txt}).catch(()=>toast('快捷键注册失败，可能已被占用'));
+    toast('呼出快捷键已更新为 '+txt); return; }
+  if(e.key==='Control'||e.key==='Alt'||e.key==='Shift'||e.key==='Meta'||e.key==='CapsLock'||e.key==='Tab') return;
+  const mods = [];
+  if(e.ctrlKey) mods.push('Ctrl');
+  if(e.altKey) mods.push('Alt');
+  if(e.shiftKey) mods.push('Shift');
+  const keyName = e.key.length===1 ? e.key.toUpperCase() : e.key;
+  el.value = mods.length ? mods.join('+')+'+'+keyName : keyName;
+}
+function hotkeyBlur(){ recHot=false; const el=document.getElementById('hotkeyInput'); if(el) el.classList.remove('rec'); }
 /* 右键底栏 → 更多菜单（显示历史/设置/清空历史/缓存目录/关于） */
 function footerCtx(ev){
   ev.preventDefault();
@@ -1591,6 +1619,13 @@ renderList(); renderDevs();
       const c = document.getElementById('autoSave'); if (c) c.checked = !!v;
       const f = document.getElementById('fastSave'); if (f) f.checked = !!v;    }
   }).catch(() => {});
+  /* —— 呼出快捷键：设置值同步到底栏与设置页 —— */
+  T.core.invoke('get_setting', { key: 'hotkey' }).then(v => {
+    if (v && typeof v === 'string') {
+      const inp = document.getElementById('hotkeyInput'); if (inp) inp.value = v;
+      const ft = document.getElementById('hotkeyTxt'); if (ft) ft.textContent = v;
+    }
+  }).catch(() => {});
   /* —— 类别数量上限：回填设置页（默认 文字200/图片200/文件100） —— */
   [['textLimitSel','history.limitText',200],['imgLimitSel','history.limitImg',200],['fileLimitSel','history.limitFile',100]].forEach(p => {
     T.core.invoke('get_setting', { key: p[1] }).then(v => {
@@ -1688,6 +1723,15 @@ renderList(); renderDevs();
         await T.core.invoke('net_set_alias', { alias: a.value.trim() });
         const t = document.getElementById('aliasTxt'); if (t) t.textContent = a.value.trim();
       } catch (e) { if (typeof toast === 'function') toast('别名保存失败：' + e, true); }
+    }
+    // 呼出快捷键：录制后的新组合 → 后端注册 + 底栏同步
+    const hk = document.getElementById('hotkeyInput');
+    if (hk && hk.value && hk.value.trim()) {
+      const combo = hk.value.trim();
+      try {
+        await T.core.invoke('qp_set_hotkey', { combo });
+        const ft = document.getElementById('hotkeyTxt'); if (ft) ft.textContent = combo;
+      } catch (e) { if (typeof toast === 'function') toast('快捷键保存失败：' + e, true); }
     }
     // 自动保存
     const auto = document.getElementById('autoSave');

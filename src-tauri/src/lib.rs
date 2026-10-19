@@ -14,6 +14,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, Size, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 pub const MAIN_LABEL: &str = "main";
 const GEOM_KEY: &str = "window.geometry";
@@ -55,7 +56,18 @@ pub struct DownloadStateInner {
 }
 
 /// 当前注册的呼出快捷键（支持设置页动态修改）
-// （v0.3.0 移除全局快捷键，呼出仅保留系统托盘）
+struct HotkeyState {
+    cur: Mutex<Option<String>>,
+}
+
+impl Default for HotkeyState {
+    fn default() -> Self {
+        HotkeyState {
+            // 初始 None：表示尚未注册任何热键，首次 apply_hotkey 必须真正注册
+            cur: Mutex::new(None),
+        }
+    }
+}
 
 #[derive(serde::Deserialize, Clone, Copy)]
 struct GeomValue {
@@ -75,9 +87,11 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
+        .manage(HotkeyState::default())
         .manage(history::History::default())
         .manage(DownloadState::default())
         .manage(net::NetState::default())
@@ -90,6 +104,7 @@ pub fn run() {
             cmds::qp_clear_cache,
             cmds::qp_resize_begin,
             cmds::qp_debug_resize,
+            cmds::qp_set_hotkey,
             cmds::qp_window_hide,
             cmds::qp_window_toggle_max,
             cmds::about_info,
@@ -153,7 +168,20 @@ pub fn run() {
             if let Ok(v) = std::env::var("QP_SEND_TEST") {
                 net::test_send(app.handle().clone(), &v);
             }
-            // 呼出仅保留系统托盘（v0.3.0 起移除全局快捷键）
+            // 呼出快捷键（支持设置页修改；默认 Ctrl+Alt+Z）
+            let hotkey = settings::get_key(app.handle(), "hotkey")
+                .ok()
+                .flatten()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "Ctrl+Alt+Z".into());
+            // 旧默认 Alt+Z 迁移为新默认 Ctrl+Alt+Z（用户未改过快捷键时保持默认一致）
+            let hotkey = if hotkey == "Alt+Z" {
+                "Ctrl+Alt+Z".to_string()
+            } else {
+                hotkey.clone()
+            };
+            let _ = settings::set_key(app.handle(), "hotkey", serde_json::json!(hotkey));
+            apply_hotkey(app.handle(), &hotkey);
             setup_tray(app.handle())?;
             apply_autostart(app)?;
             restore_geometry(app)?;
@@ -184,6 +212,58 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("QuickPaste 启动失败");
+}
+
+/* ────────────── 热键呼出（支持动态修改） ────────────── */
+
+/// 热键调试日志（%TEMP%\qp-hotkey.log）
+fn hlog(msg: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("qp-hotkey.log")) {
+        let _ = f.write_all(format!("{msg}\n").as_bytes());
+    }
+}
+
+/// 注册/切换呼出快捷键：先移除旧组合，再注册新组合
+pub fn apply_hotkey(app: &AppHandle, combo: &str) {
+    hlog(&format!("apply_hotkey: combo={combo}"));
+    let st = app.state::<HotkeyState>();
+    let prev = st.cur.lock().unwrap().clone();
+    hlog(&format!("prev={prev:?}"));
+    if let Some(ref p) = prev {
+        if p == combo {
+            hlog("same, skip");
+            return;
+        }
+        let _ = app.global_shortcut().unregister(p.as_str());
+    }
+    let ok = app
+        .global_shortcut()
+        .on_shortcut(combo, |app, _sc, ev| {
+            if ev.state() == ShortcutState::Pressed {
+                hlog("hotkey PRESSED → toggle_main");
+                toggle_main(app);
+            }
+        });
+    match ok {
+        Ok(_) => {
+            hlog("register ok");
+            *st.cur.lock().unwrap() = Some(combo.to_string());
+        }
+        Err(e) => {
+            hlog(&format!("register FAILED: {e}"));
+            let _ = app.global_shortcut().unregister(combo);
+            let _ = app
+                .global_shortcut()
+                .on_shortcut(prev.as_deref().unwrap_or("Ctrl+Alt+Z"), |app, _sc, ev| {
+                    if ev.state() == ShortcutState::Pressed {
+                        toggle_main(app);
+                    }
+                });
+            *st.cur.lock().unwrap() = prev;
+            let _ = settings::set_key(app, "hotkey", serde_json::json!(st.cur.lock().unwrap().clone().unwrap_or_default()));
+        }
+    }
 }
 
 /* ────────────── 系统托盘：图标 + 右击菜单 ────────────── */
@@ -235,13 +315,18 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 
 fn toggle_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(MAIN_LABEL) {
+        hlog(&format!("toggle_main: visible={:?}", w.is_visible()));
         if w.is_visible().unwrap_or(false) {
-            let _ = w.hide();
+            let r = w.hide();
+            hlog(&format!("hide → {:?}", r));
         } else {
             let _ = w.unminimize(); // 从任务栏/最小化状态还原
             let _ = w.show();
             let _ = w.set_focus();
+            hlog("show+focus");
         }
+    } else {
+        hlog("toggle_main: main window NOT FOUND");
     }
 }
 
