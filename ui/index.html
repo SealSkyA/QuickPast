@@ -610,6 +610,16 @@ button:disabled{opacity:.45;box-shadow:none}
   </div>
 </div>
 
+<div class="modal" id="m-sendText">
+  <h4><svg class="ico" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4z"/><path d="M9 7h6M9 10.5h4"/></svg><span id="sendTextTitle">发送文本</span></h4>
+  <div class="mhint">输入内容后发送给选中的附近设备。</div>
+  <textarea id="sendTextBody" placeholder="输入内容…" style="width:100%;height:150px;box-sizing:border-box;resize:none;border:none;border-radius:12px;background:var(--bg);box-shadow:var(--in);padding:11px 13px;font-size:13px;color:var(--fg);font-family:inherit;outline:none;line-height:1.7"></textarea>
+  <div style="display:flex;gap:10px;margin-top:14px">
+    <button class="pri" style="flex:1" onclick="confirmSendText()">确定</button>
+    <button style="flex:1" onclick="closeModal('m-sendText')">取消</button>
+  </div>
+</div>
+
 <div class="modal" id="m-zoom">
   <h4><svg class="ico" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>图片预览<span id="zoomName" style="flex:1;min-width:0;font-weight:500;color:var(--mut);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><span id="zoomLb" style="font-size:12px;font-weight:600;color:var(--mut);margin-right:2px">×1</span><div class="iconbtn" title="放大缩小" onclick="event.stopPropagation();zoomStep()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/><path d="M11 8v6M8 11h6"/></svg></div></h4>
   <img id="zoomImg" alt="" style="max-width:100%;max-height:58vh;border-radius:12px;box-shadow:var(--in-sm);display:block;margin:10px auto 0">
@@ -1235,10 +1245,25 @@ function pickType(el,name){
     inp.click();
     return;
   }
-  const v=prompt('输入要发送的'+(name==='文本'?'文本：':'剪贴板内容：'), name==='文本'?'':'http://www.example.com');
-  if(v===null) return;
-  SEL.push({type:'text', content:v, name:(v.length>34? v.slice(0,34)+'…' : v)||'(空文本)', size:'文本'});
-  renderSel(); toast('已添加文本');
+  openSendTextModal(name);
+}
+let sendTextType='文本';
+function openSendTextModal(name){
+  sendTextType=name;
+  document.getElementById('sendTextTitle').textContent = name==='文本' ? '发送文本' : '发送剪贴板内容';
+  const ta=document.getElementById('sendTextBody');
+  ta.value = name==='文本' ? '' : 'http://www.example.com';
+  openModal('m-sendText');
+  setTimeout(()=>{ ta.focus(); ta.select(); }, 60);
+}
+function confirmSendText(){
+  const v=document.getElementById('sendTextBody').value;
+  const name=sendTextType;
+  const label=(v.length>34? v.slice(0,34)+'…' : v)||'(空文本)';
+  SEL.push({type:'text', content:v, name:label, size:name});
+  renderSel();
+  toast('已添加'+(name==='文本'?'文本':'剪贴板内容'));
+  closeModal('m-sendText');
 }
 function fmtSize(n){
   if(n>=1048576) return (n/1048576).toFixed(1)+' MB';
@@ -1572,12 +1597,19 @@ renderList(); renderDevs();
     window.__incSession = p.sessionId || '';
     if (typeof toast === 'function') toast('来自「' + p.senderAlias + '」的文件请求');
     const from = document.getElementById('incFrom');
-    if (from) from.innerHTML = '来自 <b style="color:var(--acc)">' + esc(p.senderAlias) + '</b>（' + esc(p.senderIp) + '）请求发送 <b>' + (p.files||[]).length + '</b> 个文件，共 <b>' + fmtSize(p.totalSize||0) + '</b>。';
+    const files = p.files || [];
+    const txtAll = files.length > 0 && files.every(f => (f.fileType || '') === 'text');
+    if (from) from.innerHTML = txtAll
+      ? '来自 <b style="color:var(--acc)">' + esc(p.senderAlias) + '</b>（' + esc(p.senderIp) + '）发来文本：接受后将写入你的剪贴板，直接粘贴即可。'
+      : '来自 <b style="color:var(--acc)">' + esc(p.senderAlias) + '</b>（' + esc(p.senderIp) + '）请求发送 <b>' + files.length + '</b> 个文件，共 <b>' + fmtSize(p.totalSize || 0) + '</b>。';
     const box = document.getElementById('incFiles');
-    if (box) box.innerHTML = (p.files||[]).map(f =>
-      '<div class="inc-f">' + svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>') +
-      '<span class="in">' + esc(f.fileName) + '</span><span class="sz">' + fmtSize(f.size||0) + '</span></div>'
-    ).join('');
+    if (box) box.innerHTML = files.map(f => {
+      const isTxt = (f.fileType || '') === 'text';
+      return '<div class="inc-f">' + (isTxt
+        ? svg('<path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4z"/><path d="M9 7h6M9 10.5h4"/>')
+        : svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>')) +
+        '<span class="in">' + esc(f.fileName) + (isTxt ? ' <em style="color:var(--acc);font-style:normal">文本·会复制到剪贴板</em>' : '') + '</span><span class="sz">' + fmtSize(f.size || 0) + '</span></div>';
+    }).join('');
     if (typeof openModal === 'function') openModal('m-incoming');
   });
   window.acceptIncoming = function () {
@@ -1609,7 +1641,9 @@ renderList(); renderDevs();
   listen('qp:rcv_done', e => {
     const c = document.getElementById('rcvCard'); if (c) c.style.display = 'none';
     const f = document.getElementById('rcvFill'); if (f) f.style.width = '0';
-    if (typeof toast === 'function') toast('接收完成：文件已保存到下载目录');
+    const pf = (e && e.payload && e.payload.files) || [];
+    const isTxt = pf.length > 0 && pf.every(x => (x.fileType || '') === 'text');
+    if (typeof toast === 'function') toast(isTxt ? '接收完成：文本已复制到剪贴板，直接粘贴即可' : '接收完成：文件已保存到下载目录');
   });
   listen('qp:send_progress', e => {
     const p = e && e.payload; if (!p || typeof showXp !== 'function') return;

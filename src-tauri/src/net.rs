@@ -16,6 +16,8 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
+use clipboard_rs::Clipboard;
+
 pub const PORT: u16 = 53317;
 const MC_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 167);
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(10);
@@ -692,6 +694,45 @@ fn handle_upload(app: AppHandle, mut req: tiny_http::Request, url: &str) {
     f.state = "InProgress".into();
     s.state = "InProgress".into();
 
+    // 文本消息（LocalSend v2 fileType=text）：不生成实体文件，直接写入系统剪贴板
+    if f.file_type == "text" {
+        let mut content: Vec<u8> = Vec::new();
+        {
+            let reader = req.as_reader();
+            let mut buf = [0u8; 512 * 1024];
+            loop {
+                let n = reader.read(&mut buf).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                content.extend_from_slice(&buf[..n]);
+            }
+        }
+        let text = String::from_utf8_lossy(&content).to_string();
+        match clipboard_rs::ClipboardContext::new() {
+            Ok(c) => match c.set_text(text.clone()) {
+                Ok(()) => {}
+                Err(e) => log(&format!("收到文本但写入剪贴板失败: {e}")),
+            },
+            Err(e) => log(&format!("收到文本但无法打开剪贴板: {e}")),
+        }
+        f.state = "Finished".into();
+        f.path = None;
+        respond(&app, req, 200, "text/plain", Vec::new());
+        let done = s.files.iter().all(|f| f.state == "Finished");
+        if done {
+            s.state = "Finished".into();
+            let snap = s.files.clone();
+            let alias = s.sender_alias.clone();
+            drop(sess);
+            let _ = app.emit(
+                "qp:rcv_done",
+                serde_json::json!({"sessionId": session_id, "senderAlias": alias, "files": snap}),
+            );
+        }
+        return;
+    }
+
     // 流式落盘 + sha256
     let dir = rcv_dir(&app);
     let _ = std::fs::create_dir_all(&dir);
@@ -1199,15 +1240,63 @@ pub fn net_send(app: AppHandle, device: Device, paths: Vec<String>) -> Result<()
     send_files(Some(&app), &device, &paths)
 }
 
-/// 发送纯文本到指定设备：写临时文件 → send_files → 清理
+/// 发送纯文本到指定设备：采用 LocalSend v2 文本消息（fileType=text），
+/// 接收方直接写入系统剪贴板（对方粘贴即用），不生成实体文件。
 #[tauri::command]
 pub fn net_send_text(app: AppHandle, device: Device, text: String) -> Result<(), String> {
-    let p = std::env::temp_dir().join(format!("qp-text-{}.txt", Uuid::new_v4().simple()));
-    std::fs::write(&p, &text).map_err(|e| format!("写临时文件失败：{e}"))?;
-    let path = p.to_string_lossy().to_string();
-    let r = send_files(Some(&app), &device, &[path.clone()]);
-    let _ = std::fs::remove_file(&path);
-    r
+    if text.is_empty() {
+        return Err("文本为空".into());
+    }
+    let mut files_map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+    let file_id = Uuid::new_v4().to_string();
+    files_map.insert(
+        file_id.clone(),
+        serde_json::json!({
+            "id": file_id,
+            "fileName": "剪贴板.txt",
+            "size": text.len(),
+            "fileType": "text",
+        }),
+    );
+    let base = format!("http://{}:{}/api/localsend/v2", device.ip, device.port);
+    let req_body = serde_json::json!({ "info": my_info(Some(&app)), "files": files_map });
+
+    // prepare-upload
+    let resp = ureq::post(&format!("{base}/prepare-upload"))
+        .timeout(Duration::from_secs(60))
+        .set("Content-Type", "application/json")
+        .send_string(&req_body.to_string())
+        .map_err(|e| match e {
+            ureq::Error::Status(403, _) => "对端拒绝了发送".into(),
+            ureq::Error::Status(409, _) => "对端正忙（其他会话进行中）".into(),
+            ureq::Error::Status(code, _) => format!("对端返回 HTTP {code}"),
+            ureq::Error::Transport(t) => format!("无法连接对端：{t}"),
+        })?;
+    let body = resp.into_string().unwrap_or_default();
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|_| "对端响应格式错误".to_string())?;
+    let session_id = v["sessionId"]
+        .as_str()
+        .ok_or("对端未返回 sessionId")?
+        .to_string();
+    let tokens: HashMap<String, String> = serde_json::from_value(v["files"].clone())
+        .map_err(|_| "对端未返回文本令牌".to_string())?;
+    let token = tokens.get(&file_id).ok_or("对端未接受该文本")?.clone();
+
+    // upload：body 为纯文本（不落盘）
+    let url = format!("{base}/upload?sessionId={session_id}&fileId={file_id}&token={token}");
+    let r = ureq::post(&url)
+        .timeout(Duration::from_secs(60))
+        .send_string(&text)
+        .map_err(|e| match e {
+            ureq::Error::Status(code, r) => {
+                format!("发送失败（HTTP {code}: {})", r.into_string().unwrap_or_default())
+            }
+            ureq::Error::Transport(t) => format!("发送失败：{t}"),
+        })?;
+    drop(r);
+    let _ = app.emit("qp:send_done", serde_json::json!({"device": device.alias}));
+    Ok(())
 }
 
 /// 创建 Web 分享会话（链接下载），返回分享 URL
