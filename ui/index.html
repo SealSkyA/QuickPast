@@ -450,7 +450,7 @@ button:disabled{opacity:.45;box-shadow:none}
 
           <!-- 接收 -->
           <div class="xview on" id="xv-recv">
-            <div class="xcard">
+            <div class="xcard" id="rcvHome">
               <h3><svg class="ico" viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>接收</h3>
               <div class="rdwrap col">
                 <div class="rdar"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></div>
@@ -518,7 +518,7 @@ button:disabled{opacity:.45;box-shadow:none}
         </div>
       </div>
       <div class="footerbar">
-        <span>传输 <b id="xstat">在线</b></span><span>·</span>
+        <span>状态 <b id="xstat">在线</b></span><span>·</span>
         <span>服务 <b>QuickPaste-LAN</b></span><span>·</span>
         <span>拖入文件到窗口即可发送</span>
       </div>
@@ -1182,10 +1182,16 @@ function menuIcon(a){
   return ({复制:IC.copy,复制格式:'<path d="M8 8h12v12H8z"/><path d="M16 8V4H4v12h4"/><path d="M9 13h6M9 16h4"/>',发送给设备:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v4m0 0l-2-2m2 2l2-2"/>',收藏:IC.star,取消收藏:IC.star,删除收藏:IC.star,置顶:IC.pin,修改:IC.edit,删除:IC.del,另存为:IC.save,"打开文件位置":IC.open,清空所有:IC.del,删除当前项:IC.del,批量选择:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12l2 2 4-4"/>'})[a]||'';
 }
 function closeAllPopup(){
+  const inc = document.getElementById('m-incoming');
+  const incOpen = !!inc && inc.classList.contains('on');
   document.getElementById('menu3').style.display='none';
   document.getElementById('trayPop').style.display='none';
   document.querySelectorAll('.modal.on').forEach(m=>m.classList.remove('on'));
   document.getElementById('mask').classList.remove('on');
+  // 点遮罩/别处关闭接收弹窗 → 视为放弃当前任务：自动拒绝并放行队列下一个
+  if(incOpen && window.__incBusy && typeof window.rejectIncoming === 'function'){
+    window.rejectIncoming();
+  }
 }
 
 /* Delete 键：批量勾选状态下删除勾选项（勾选框是 checkbox，焦点在其上时也允许删除） */
@@ -1661,14 +1667,26 @@ renderList(); renderDevs();
     if (typeof toast === 'function') toast(on ? '已开启自动保存：文件将自动存入保存目录' : '已关闭自动保存：接收需手动确认');
   };
 
-  /* —— S3：接收确认 / 进度 —— */
-  listen('qp:incoming', e => {
-    const p = e && e.payload; if (!p) return;
+  /* —— S3：接收确认 / 进度（多人同时发送 → 任务队列，一次处理一个，窗口叠加） —— */
+  window.__incQueue = [];   // 待处理的接收任务（payload 列表）
+  window.__incBusy = false; // 当前有弹窗/接收进行中
+  window.__incSession = '';
+  // 有接收任务时隐藏首页区域（动图/别名卡片），只显示接收任务提示；无任务时恢复首页
+  function setRcvHome(show) {
+    const rw = document.querySelector('#xv-recv .rdwrap.col');
+    const nt = document.getElementById('recvNotice');
+    if (rw) rw.style.display = show ? '' : 'none';
+    if (nt) nt.style.display = show ? 'none' : '';
+  }
+  function showNextIncoming() {
+    if (window.__incBusy) return;
+    if (window.__incQueue.length === 0) { setRcvHome(true); return; }
+    const p = window.__incQueue.shift();
     window.__incSession = p.sessionId || '';
-    // 有接收任务：文件传输页内自动切到「接收」视图
-    const rail = document.querySelector('#rail-file .rail-item[data-x="recv"]');
-    if (rail && typeof switchX === 'function') switchX(rail);
-    if (typeof toast === 'function') toast('来自「' + p.senderAlias + '」的文件请求');
+    window.__incBusy = true;
+    setRcvHome(false);
+    const rf = document.getElementById('rcvFrom');
+    if (rf) rf.textContent = p.senderAlias || '未知设备';
     const from = document.getElementById('incFrom');
     const files = p.files || [];
     const txtAll = files.length > 0 && files.every(f => (f.fileType || '') === 'text');
@@ -1684,21 +1702,36 @@ renderList(); renderDevs();
         '<span class="in">' + esc(f.fileName) + (isTxt ? ' <em style="color:var(--acc);font-style:normal">文本·会复制到剪贴板</em>' : '') + '</span><span class="sz">' + fmtSize(f.size || 0) + '</span></div>';
     }).join('');
     if (typeof openModal === 'function') openModal('m-incoming');
+  }
+  listen('qp:incoming', e => {
+    const p = e && e.payload; if (!p) return;
+    window.__incQueue.push(p);
+    // 有接收任务：文件传输页内自动切到「接收」视图
+    const rail = document.querySelector('#rail-file .rail-item[data-x="recv"]');
+    if (rail && typeof switchX === 'function') switchX(rail);
+    if (typeof toast === 'function') toast('来自「' + p.senderAlias + '」的文件请求');
+    showNextIncoming();
   });
   window.acceptIncoming = function () {
-    const si = (typeof window.__incSession === 'string') ? window.__incSession : '';
     closeModal('m-incoming');
+    const si = (typeof window.__incSession === 'string') ? window.__incSession : '';
     T.core.invoke('net_accept', { sessionId: si, fileIds: null }).then(() => {
       const c = document.getElementById('rcvCard'); if (c) c.style.display = '';
       if (typeof toast === 'function') toast('已接受，开始接收…');
-    }).catch(e => { if (typeof toast === 'function') toast('接受失败：' + e, true); });
+    }).catch(e => {
+      window.__incBusy = false; // 接受失败 → 放行下一个任务
+      showNextIncoming();
+      if (typeof toast === 'function') toast('接受失败：' + e, true);
+    });
   };
   window.rejectIncoming = function () {
     closeModal('m-incoming');
     const si = (typeof window.__incSession === 'string') ? window.__incSession : '';
+    window.__incBusy = false;
     T.core.invoke('net_reject', { sessionId: si }).then(() => {
       if (typeof toast === 'function') toast('已拒绝');
     }).catch(e => { if (typeof toast === 'function') toast('拒绝失败：' + e, true); });
+    showNextIncoming();
   };
   listen('qp:rcv_progress', e => {
     const p = e && e.payload; if (!p) return;
@@ -1717,6 +1750,9 @@ renderList(); renderDevs();
     const pf = (e && e.payload && e.payload.files) || [];
     const isTxt = pf.length > 0 && pf.every(x => (x.fileType || '') === 'text');
     if (typeof toast === 'function') toast(isTxt ? '接收完成：文本已复制到剪贴板，直接粘贴即可' : '接收完成：文件已保存到下载目录');
+    // 本次接收完成 → 放行队列中的下一个任务（接收完 A 才能看到 B、C）
+    window.__incBusy = false;
+    showNextIncoming();
   });
   listen('qp:send_progress', e => {
     const p = e && e.payload; if (!p || typeof showXp !== 'function') return;

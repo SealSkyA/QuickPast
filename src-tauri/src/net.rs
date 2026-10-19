@@ -514,19 +514,7 @@ fn handle_prepare_upload(app: AppHandle, mut req: tiny_http::Request) {
     let sender_alias = info["alias"].as_str().unwrap_or("?").to_string();
     let sender_fp = info["fingerprint"].as_str().unwrap_or("").to_string();
 
-    // 单槽：已有活动会话 → 409
-    {
-        let st = app.state::<NetState>();
-        let sess = st.sessions.lock().unwrap();
-        for s in sess.values() {
-            if s.state == "Pending" || s.state == "Accepted" || s.state == "InProgress" {
-                respond_json(&app, req, 409, &serde_json::json!({"message":"Blocked by another session"}));
-                return;
-            }
-        }
-    }
-
-    // 生成会话
+    // 生成会话（支持多人同时发送：每个会话独立排队，前端逐个确认）
     let session_id = Uuid::new_v4().to_string();
     let confirm: Arc<(Mutex<Option<bool>>, Condvar)> = Arc::new((Mutex::new(None), Condvar::new()));
     let mut rfiles = Vec::new();
