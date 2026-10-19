@@ -24,7 +24,7 @@
       {
         "label": "about",
         "title": "关于与升级",
-        "url": "about.html",
+        "url": "about.html?v=2",
         "width": 520,
         "height": 560,
         "minWidth": 420,

@@ -49,11 +49,11 @@ button:hover{box-shadow:var(--up-sm);color:var(--acc)}
 button:active{box-shadow:var(--in-sm)}
 button.pri{background:var(--acc);color:#fff;box-shadow:-3px -3px 7px var(--lt), 3px 3px 8px rgba(77,111,164,.45)}
 button.pri:active{box-shadow:var(--in)}
-/* toast */
-.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(8px);opacity:0;pointer-events:none;
-  background:#3c4453;color:#fff;font-size:12.5px;padding:8px 16px;border-radius:999px;transition:.18s;z-index:99;
-  box-shadow:0 4px 14px rgba(60,68,83,.35);white-space:nowrap;max-width:80vw;overflow:hidden;text-overflow:ellipsis}
-.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+/* toast（关于弹窗中央提示） */
+.toast{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(.96);opacity:0;pointer-events:none;
+  background:#3c4453;color:#fff;font-size:13px;padding:10px 20px;border-radius:999px;transition:.18s;z-index:99;
+  box-shadow:0 6px 20px rgba(60,68,83,.4);white-space:nowrap;max-width:80vw;overflow:hidden;text-overflow:ellipsis}
+.toast.on{opacity:1;transform:translate(-50%,-50%) scale(1)}
 .toast.err{background:var(--err)}
 </style>
 </head>
