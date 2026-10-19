@@ -14,12 +14,12 @@
         "title": "QuickPaste",
         "width": 860,
         "height": 600,
-        "minWidth": 700,
-        "minHeight": 460,
+        "minWidth": 600,
+        "minHeight": 400,
         "resizable": true,
         "decorations": false,
         "center": true,
-        "visible": true
+        "visible": false
       },
       {
         "label": "about",

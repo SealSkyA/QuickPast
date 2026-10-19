@@ -223,8 +223,8 @@ extern "system" {
 }
 
 const VK_LBUTTON: i32 = 0x01;
-const MIN_W_LOGICAL: f64 = 700.0; // 与 tauri.conf.json minWidth 一致
-const MIN_H_LOGICAL: f64 = 460.0;
+const MIN_W_LOGICAL: f64 = 600.0; // 与 tauri.conf.json minWidth 一致
+const MIN_H_LOGICAL: f64 = 400.0;
 
 /// 临时调试：不依赖鼠标，直接模拟 20 步缩放，验证 Rust 线程 + set_size 链路
 #[tauri::command]
