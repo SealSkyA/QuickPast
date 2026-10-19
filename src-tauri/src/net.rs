@@ -611,8 +611,11 @@ fn handle_prepare_upload(app: AppHandle, mut req: tiny_http::Request) {
     let (lock, cv) = &*confirm;
     let mut guard = lock.lock().unwrap();
     while guard.is_none() {
-        let (g, _) = cv.wait_timeout(guard, CONFIRM_TIMEOUT).unwrap();
+        let (g, to) = cv.wait_timeout(guard, CONFIRM_TIMEOUT).unwrap();
         guard = g;
+        if to.timed_out() {
+            break; // 超时无决定 → 按拒绝处理，释放单槽
+        }
     }
     let accept = guard.unwrap_or(false);
     drop(guard);

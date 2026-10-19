@@ -185,16 +185,17 @@ input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-
 .xcard h3 .ico{width:16px;height:16px;color:var(--acc)}
 .chint{font-size:11.5px;color:var(--mut);margin-bottom:12px}
 .rdwrap{display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:4px 2px 0}
-/* 接收页竖排：动图居中，别名 / 自动保存+开关 / 说明依次换行（上下左右间距一致） */
-.rdwrap.col{flex-direction:column;align-items:center;text-align:center;gap:14px;padding:10px}
+/* 接收页竖排：动图居中，别名 / 自动保存+开关 / 说明依次换行；卡片拉满高度避免底部留白 */
+.rdwrap.col{flex-direction:column;align-items:center;text-align:center;gap:18px;padding:10px}
+#xv-recv .xcard{flex:1;display:flex;flex-direction:column;justify-content:center}
 .rdwrap.col .alias{justify-content:center}
 .rdwrap.col .auto-sw{justify-content:center}
 .as-lbl{font-size:13px;font-weight:600;color:var(--fg)}
-.rdar{width:66px;height:66px;border-radius:999px;position:relative;flex:none;
+.rdar{width:96px;height:96px;border-radius:999px;position:relative;flex:none;
   background:var(--card);box-shadow:var(--in);animation:rdar 2.4s ease-out infinite}
-.rdar::before,.rdar::after{content:'';position:absolute;inset:8px;border-radius:50%;border:2px solid var(--acc);opacity:0;animation:rdar 2.4s ease-out infinite}
+.rdar::before,.rdar::after{content:'';position:absolute;inset:12px;border-radius:50%;border:2px solid var(--acc);opacity:0;animation:rdar 2.4s ease-out infinite}
 .rdar::after{animation-delay:1.2s}
-.rdar .ico{position:absolute;inset:0;margin:auto;color:var(--acc);width:22px;height:22px}
+.rdar .ico{position:absolute;inset:0;margin:auto;color:var(--acc);width:32px;height:32px}
 @keyframes rdar{0%{transform:scale(.55);opacity:.9}70%{transform:scale(1);opacity:0}100%{opacity:0}}
 .rdinfo{flex:1;min-width:170px}
 .rdinfo .alias{font-size:16px;font-weight:700;display:flex;align-items:center;gap:7px}
@@ -1614,6 +1615,13 @@ renderList(); renderDevs();
       const s = document.getElementById('setAlias'); if (s) s.value = i.alias;
     }
   }).catch(() => {});
+  /* —— 服务器在线/离线：底栏「传输在线」跟随 —— */
+  window.updateNetStat = function (on) {
+    const x = document.getElementById('xstat');
+    if (!x) return;
+    x.textContent = on ? '在线' : '离线';
+    x.style.color = on ? 'var(--ok)' : 'var(--warn)';
+  };
   T.core.invoke('get_setting', { key: 'net.autoSave' }).then(v => {
     if (v) {
       const c = document.getElementById('autoSave'); if (c) c.checked = !!v;
@@ -1655,6 +1663,9 @@ renderList(); renderDevs();
   listen('qp:incoming', e => {
     const p = e && e.payload; if (!p) return;
     window.__incSession = p.sessionId || '';
+    // 有接收任务：文件传输页内自动切到「接收」视图
+    const rail = document.querySelector('#rail-file .rail-item[data-x="recv"]');
+    if (rail && typeof switchX === 'function') switchX(rail);
     if (typeof toast === 'function') toast('来自「' + p.senderAlias + '」的文件请求');
     const from = document.getElementById('incFrom');
     const files = p.files || [];
@@ -1753,7 +1764,11 @@ renderList(); renderDevs();
     }
     // 服务器在线/离线
     const nm = document.getElementById('netModeSel');
-    if (nm) T.core.invoke('set_setting', { key: 'net.online', value: nm.value === 'true' }).catch(() => {});
+    if (nm) {
+      const on = nm.value === 'true';
+      T.core.invoke('set_setting', { key: 'net.online', value: on }).catch(() => {});
+      if (typeof window.updateNetStat === 'function') window.updateNetStat(on);
+    }
     // 监听端口（高级）
     const np = document.getElementById('netPortInput');
     if (np && np.value) {
@@ -1845,6 +1860,7 @@ renderList(); renderDevs();
       const nm = await T.core.invoke('get_setting', { key: 'net.online' }).catch(() => null);
       const sel = document.getElementById('netModeSel');
       if (sel) sel.value = String(nm === false ? false : true);
+      if (typeof window.updateNetStat === 'function') window.updateNetStat(nm !== false);
       const np = await T.core.invoke('get_setting', { key: 'net.port' }).catch(() => null);
       const npi = document.getElementById('netPortInput');
       if (npi) npi.value = (typeof np === 'number' && np > 0) ? np : 53317;
