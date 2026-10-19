@@ -12,7 +12,76 @@ use clipboard_rs::{Clipboard, common::RustImage};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::settings;
+
 pub const LIMIT: usize = 600;
+
+/// 各类别数量上限（设置可调；默认 文字 200 / 图片 200 / 文件 100）
+fn cat_limit(app: &AppHandle, cat: &str) -> usize {
+    let key = match cat {
+        "text" => "history.limitText",
+        "img" => "history.limitImg",
+        "file" => "history.limitFile",
+        _ => return 0,
+    };
+    let dft: usize = match cat { "text" => 200, "img" => 200, "file" => 100, _ => 0 };
+    settings::get_key(app, key)
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .unwrap_or(dft)
+        .max(1)
+}
+
+/// 按类别上限裁剪：某类数量超过上限时，从最老的一条开始删除（连同内容文件），
+/// 直到该类数量 ≤ 上限。返回被删条目的 id。
+pub fn prune_by_limits(app: &AppHandle) -> Vec<u64> {
+    let st = app.state::<History>();
+    let mut items = st.items.lock().unwrap();
+    let mut removed: Vec<(u64, String)> = Vec::new();
+    for cat in ["text", "img", "file"] {
+        let limit = cat_limit(app, cat);
+        let mut over = items.iter().filter(|i| i.cat == cat).count().saturating_sub(limit);
+        let mut idx = items.len();
+        while over > 0 && idx > 0 {
+            idx -= 1;
+            if items[idx].cat == cat {
+                let (id, c) = (items[idx].id, items[idx].cat.clone());
+                items.remove(idx);
+                removed.push((id, c));
+                over -= 1;
+            }
+        }
+    }
+    if removed.is_empty() {
+        return Vec::new();
+    }
+    drop(items);
+    for (id, cat) in &removed {
+        match cat.as_str() {
+            "text" => {
+                let _ = std::fs::remove_file(text_dir(&app).join(format!("{id}.txt")));
+                let _ = std::fs::remove_file(text_dir(&app).join(format!("{id}.html")));
+            }
+            "img" => {
+                let _ = std::fs::remove_file(img_dir(&app).join(format!("{id}.png")));
+            }
+            "file" => {
+                let _ = std::fs::remove_dir_all(file_dir(&app).join(format!("{id}")));
+            }
+            _ => {}
+        }
+    }
+    save_items(&app, &st.items.lock().unwrap());
+    removed.iter().map(|(id, _)| *id).collect()
+}
+
+/// 设置页保存上限后立即应用（超出部分删最早）
+#[tauri::command]
+pub fn history_apply_limits(app: AppHandle) -> Vec<u64> {
+    prune_by_limits(&app)
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Item {
@@ -298,7 +367,12 @@ pub fn spawn_watcher(app: AppHandle) {
         let emit_item = items[0].clone();
         drop(items);
         save_items(&app, &st.items.lock().unwrap());
-        let _ = app.emit("qp:clip", emit_item);
+        // 类别数量上限：超出时删除最早的一条，并通知前端同步移除
+        let pruned = prune_by_limits(&app);
+        let _ = app.emit(
+            "qp:clip",
+            serde_json::json!({ "item": emit_item, "removed": pruned }),
+        );
     });
 }
 

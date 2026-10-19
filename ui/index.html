@@ -535,9 +535,9 @@ button:disabled{opacity:.45;box-shadow:none}
     </div>
     <div class="setwrap">
       <div class="set on" id="set-quick">
-        <div class="row"><div class="lbl"><b>文字数量上限</b><span>文字历史最多保留的条数</span></div><div class="ctl"><input type="number" value="200" min="50" max="2000"></div></div>
-        <div class="row"><div class="lbl"><b>图片数量上限</b><span>图片历史最多保留的条数</span></div><div class="ctl"><input type="number" value="200" min="20" max="1000"></div></div>
-        <div class="row"><div class="lbl"><b>文件数量上限</b><span>文件历史最多保留的条数</span></div><div class="ctl"><input type="number" value="100" min="20" max="1000"></div></div>
+        <div class="row"><div class="lbl"><b>文字数量上限</b><span>文字历史最多保留的条数，超出删最早</span></div><div class="ctl"><input type="number" id="textLimitSel" value="200" min="50" max="2000"></div></div>
+        <div class="row"><div class="lbl"><b>图片数量上限</b><span>图片历史最多保留的条数，超出删最早</span></div><div class="ctl"><input type="number" id="imgLimitSel" value="200" min="20" max="1000"></div></div>
+        <div class="row"><div class="lbl"><b>文件数量上限</b><span>文件历史最多保留的条数，超出删最早</span></div><div class="ctl"><input type="number" id="fileLimitSel" value="100" min="20" max="1000"></div></div>
         <div class="row"><div class="lbl"><b>呼出快捷键</b><span>点击输入框后按下新的组合键录制</span></div><div class="ctl"><input type="text" id="hotkeyInput" value="Alt+Z" placeholder="点击后按组合键" onfocus="hotkeyFocus(this)" onkeydown="hotkeyKeydown(event)" onblur="hotkeyBlur()" style="width:132px;text-align:center;font-family:ui-monospace,monospace"></div></div>
         <div class="row"><div class="lbl"><b>单击行为</b><span>点击历史卡片后的动作</span></div><div class="ctl"><select><option>复制并粘贴</option><option>仅复制至剪切板</option></select></div></div>
         <div class="row"><div class="lbl"><b>默认分类</b><span>启动时定位到该分类（默认全部）</span></div><div class="ctl"><select id="defCatSel"><option value="all">全部</option><option value="text">文字</option><option value="img">图片</option><option value="file">文件</option><option value="fav">收藏</option><option value="note">便签</option></select></div></div>
@@ -1531,6 +1531,13 @@ renderList(); renderDevs();
       const ft = document.getElementById('hotkeyTxt'); if (ft) ft.textContent = v;
     }
   }).catch(() => {});
+  /* —— 类别数量上限：回填设置页（默认 文字200/图片200/文件100） —— */
+  [['textLimitSel','history.limitText',200],['imgLimitSel','history.limitImg',200],['fileLimitSel','history.limitFile',100]].forEach(p => {
+    T.core.invoke('get_setting', { key: p[1] }).then(v => {
+      const el = document.getElementById(p[0]);
+      if (el && typeof v === 'number') el.value = v;
+    }).catch(() => {});
+  });
   /* —— 默认分类：启动时定位到所选分类（默认全部） —— */
   T.core.invoke('get_setting', { key: 'defaultCat' }).then(v => {
     const c = (v && typeof v === 'string') ? v : 'all';
@@ -1654,6 +1661,26 @@ renderList(); renderDevs();
     if (ntm && ntm.value) {
       const n = Math.min(600, Math.max(5, parseInt(ntm.value, 10) || 25));
       T.core.invoke('set_setting', { key: 'net.deviceTtl', value: n }).catch(() => {});
+    }
+    // 类别数量上限：保存 + 立即裁剪（超出删最早）
+    const caps = [['textLimitSel','history.limitText'],['imgLimitSel','history.limitImg'],['fileLimitSel','history.limitFile']];
+    let capChanged = false;
+    for (const pair of caps) {
+      const el = document.getElementById(pair[0]);
+      if (el && el.value) {
+        const n = Math.max(parseInt(el.value, 10) || 0, 1);
+        T.core.invoke('set_setting', { key: pair[1], value: n }).catch(() => {});
+        capChanged = true;
+      }
+    }
+    if (capChanged) {
+      T.core.invoke('history_apply_limits').then(rm => {
+        if (rm && rm.length) {
+          for (const rid of rm) { const i = DATA.findIndex(x => x.id === rid); if (i >= 0) DATA.splice(i, 1); }
+          if (typeof renderList === 'function') renderList();
+          if (typeof toast === 'function') toast('已按新上限清理 ' + rm.length + ' 条历史');
+        }
+      }).catch(() => {});
     }
     if (typeof closeSettings === 'function') closeSettings();
     if (typeof toast === 'function') toast('设置已保存');

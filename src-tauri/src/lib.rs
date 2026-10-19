@@ -86,6 +86,7 @@ pub fn run() {
             history::history_pin,
             history::history_edit,
             history::history_add_note,
+            history::history_apply_limits,
             history::clipboard_set_text,
             history::clipboard_set_files,
             history::clipboard_set_img,
@@ -115,6 +116,8 @@ pub fn run() {
                 *st.items.lock().unwrap() = loaded;
             }
             history::prune_dups(app.handle());
+            // 类别数量上限：启动时把已超限的旧数据裁剪到上限内
+            history::prune_by_limits(app.handle());
             history::spawn_watcher(app.handle().clone());
             // S2 传输核心：组播发现 + HTTP 服务器
             net::spawn_discovery(app.handle().clone());
