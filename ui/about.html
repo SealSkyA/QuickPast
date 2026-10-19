@@ -76,7 +76,7 @@ button.pri:active{box-shadow:var(--in)}
   </div>
 
   <div class="foot">
-    <button class="pri" style="min-width:104px;flex:none" onclick="checkUpdate()">在线更新</button>
+    <button class="pri" id="btnUpdate" style="min-width:118px;flex:none" onclick="onUpdate()">在线更新</button>
     <span style="flex:1"></span>
     <button onclick="closeWin()">关闭</button>
   </div>
@@ -105,18 +105,66 @@ invoke('about_info').then(info=>{
     log.value = info.changelog.map(c => 'v'+(c.v||'')+'    '+(c.log||'')).join('\n');
   }
 }).catch(()=>{});
-// 在线更新：git 远程 tag 校验
+// 在线更新：GitHub Releases API 校验（Rust 网络栈，不弹终端框）；有新版可在线下载安装包
+let upd = null;          // {current, latest, assetName, assetUrl}
+let downloaded = null;   // 已下载的安装包路径
+let busy = false;        // 检查/下载进行中
+const btnUpdate = document.getElementById('btnUpdate');
+function setBtn(txt, dis){ btnUpdate.textContent = txt; btnUpdate.disabled = !!dis; }
 function checkUpdate(){
+  if(busy) return;
+  busy = true; setBtn('检查中…', true);
   invoke('qp_check_update')
     .then(r=>{
+      busy = false;
       if(r && r.hasUpdate){
+        upd = r;
+        setBtn('下载 v'+r.latest, false);
         toast('发现新版本 v'+r.latest+'（当前 v'+r.current+'）', true);
-        setTimeout(()=>invoke('qp_open_url',{url:r.url}).catch(()=>{}), 1200);
       } else if(r){
+        upd = null;
+        setBtn('在线更新', false);
         toast('当前已是最新版本 v'+(r.latest||r.current||''));
       }
     })
-    .catch(e=>toast('检查更新失败：'+(e||'网络异常'), true));
+    .catch(e=>{
+      busy = false; upd = null;
+      setBtn('在线更新', false);
+      toast('检查更新失败：'+(e||'网络异常'), true);
+    });
+}
+function downloadUpdate(){
+  if(busy || !upd) return;
+  if(!upd.assetUrl){
+    toast('该版本未附带安装包，请前往发布页手动下载', true);
+    setTimeout(()=>invoke('qp_open_url',{url:'https://github.com/SealSkyA/QuickPast/releases'}).catch(()=>{}), 1200);
+    return;
+  }
+  busy = true; setBtn('下载中…', true);
+  invoke('qp_download_update',{url:upd.assetUrl, name:upd.assetName})
+    .then(p=>{
+      busy = false; downloaded = p;
+      setBtn('下载完成，点击安装', false);
+      toast('已下载：'+upd.assetName);
+    })
+    .catch(e=>{
+      busy = false;
+      setBtn('重试下载', false);
+      toast('下载失败：'+(e||'网络异常'), true);
+    });
+}
+function installUpdate(){
+  if(!downloaded) return;
+  busy = true; setBtn('正在启动安装…', true);
+  invoke('qp_install_update',{path:downloaded})
+    .then(()=>toast('已启动安装向导'))
+    .catch(e=>{ busy = false; setBtn('点击安装', false); toast('启动安装失败：'+(e||''), true); });
+}
+function onUpdate(){
+  if(busy) return;
+  if(downloaded){ installUpdate(); }
+  else if(upd){ downloadUpdate(); }
+  else { checkUpdate(); }
 }
 </script>
 </body>

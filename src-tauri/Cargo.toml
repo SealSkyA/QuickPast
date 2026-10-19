@@ -35,3 +35,4 @@ local-ip-address = "0.6"
 
 # 预留（S 阶段按需启用）：在线更新等扩展
 # tauri-plugin-updater = "2"
+# 在线更新走系统 curl（静默子进程），ureq 仅用于局域网明文 HTTP，不启用 TLS

@@ -82,6 +82,8 @@ pub fn run() {
             cmds::qp_window_toggle_max,
             cmds::about_info,
             cmds::qp_check_update,
+            cmds::qp_download_update,
+            cmds::qp_install_update,
             cmds::qp_open_url,
             cmds::qp_show_about,
             history::history_load,

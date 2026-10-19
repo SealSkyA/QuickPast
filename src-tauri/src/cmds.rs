@@ -104,20 +104,6 @@ pub fn about_info() -> serde_json::Value {
     })
 }
 
-/// 找 git 可执行文件（完整路径优先，避免继承 PATH 缺失）
-fn git_exe() -> Result<String, String> {
-    for c in [
-        r"C:\Program Files\Git\bin\git.exe",
-        r"C:\Program Files\Git\cmd\git.exe",
-        "git",
-    ] {
-        if std::process::Command::new(c).arg("--version").output().is_ok() {
-            return Ok(c.to_string());
-        }
-    }
-    Err("未找到 git 命令".into())
-}
-
 /// 语义版本比较：a > b → Greater；返回 -1/0/1
 fn cmp_version(a: &str, b: &str) -> i32 {
     let num = |s: &str| -> u64 { s.trim_matches(|c: char| !c.is_ascii_digit()).parse().unwrap_or(0) };
@@ -131,46 +117,96 @@ fn cmp_version(a: &str, b: &str) -> i32 {
     0
 }
 
-/// 在线更新：git ls-remote 读取远程标签版本，与本地版本比较
+// 静默子进程标志：不弹终端/控制台窗口（CREATE_NO_WINDOW）
+const NO_WINDOW: u32 = 0x08000000;
+
+/// 在线更新：读取 GitHub Releases 最新版本（系统 curl 静默请求，不弹终端框）。
+/// 顺带取回安装包资产地址，供 qp_download_update 在线下载。
 #[tauri::command]
 pub fn qp_check_update() -> Result<serde_json::Value, String> {
-    let remote = "https://github.com/SealSkyA/QuickPast.git";
-    let git = git_exe()?;
-    // 限时执行：10 秒内无响应视为网络异常
-    let (tx, rx) = std::sync::mpsc::channel();
-    let (git2, remote2) = (git.clone(), remote.to_string());
-    std::thread::spawn(move || {
-        let out = std::process::Command::new(&git2)
-            .args(["ls-remote", "--tags", &remote2])
-            .output();
-        let _ = tx.send(out);
-    });
-    let res = rx.recv_timeout(std::time::Duration::from_secs(10))
-        .map_err(|_| "检查更新超时（网络不通或无法访问 git）".to_string())?;
-    let out = res.map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    // 解析 vX.Y.Z 标签，取最大版本
-    let mut latest: Option<String> = None;
-    for line in text.lines() {
-        if let Some(tag) = line.split("refs/tags/").nth(1) {
-            let t = tag.trim();
-            if let Some(v) = t.strip_prefix('v') {
-                if v.split('.').count() >= 2 {
-                    if latest.as_deref().map(|l| cmp_version(v, l) > 0).unwrap_or(true) {
-                        latest = Some(v.to_string());
-                    }
-                }
+    use std::os::windows::process::CommandExt;
+    let out = std::process::Command::new("curl")
+        .creation_flags(NO_WINDOW)
+        .args(["-fs", "--max-time", "12", "-H", "Accept: application/vnd.github+json", "-H", "User-Agent: QuickPaste"])
+        .arg("https://api.github.com/repos/SealSkyA/QuickPast/releases/latest")
+        .output()
+        .map_err(|e| format!("无法启动 curl：{e}"))?;
+    if !out.status.success() {
+        let code = out.status.code().unwrap_or(-1);
+        return Err(if code == 22 { "仓库暂未发布任何版本".into() } else { format!("检查更新失败（curl exit {code}）") });
+    }
+    let body = String::from_utf8_lossy(&out.stdout);
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("解析更新信息失败：{e}"))?;
+    let tag = v.get("tag_name").and_then(|t| t.as_str()).unwrap_or("").to_string();
+    let latest = tag.trim_start_matches('v').to_string();
+    // 优先选安装包资产（.exe / .msi）
+    let mut asset_name = String::new();
+    let mut asset_url = String::new();
+    if let Some(arr) = v.get("assets").and_then(|a| a.as_array()) {
+        for a in arr {
+            let name = a.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let url = a.get("browser_download_url").and_then(|u| u.as_str()).unwrap_or("");
+            if (name.ends_with(".exe") || name.ends_with(".msi")) && !url.is_empty() {
+                asset_name = name.to_string();
+                asset_url = url.to_string();
+                break;
             }
         }
     }
     let current = env!("CARGO_PKG_VERSION").to_string();
-    let latest = latest.unwrap_or_else(|| current.clone());
     serde_json::to_value(serde_json::json!({
         "current": current,
         "latest": latest,
-        "hasUpdate": cmp_version(&latest, &current) > 0,
+        "hasUpdate": !latest.is_empty() && cmp_version(&latest, &current) > 0,
         "url": "https://github.com/SealSkyA/QuickPast/releases",
+        "assetName": asset_name,
+        "assetUrl": asset_url,
     })).map_err(|e| e.to_string())
+}
+
+/// 在线下载新版本安装包（GitHub Release 资产），保存到应用缓存 downloads 目录，返回完整路径。
+/// curl 静默下载（无终端框）；已存在则直接返回。
+#[tauri::command]
+pub fn qp_download_update(app: AppHandle, url: String, name: String) -> Result<String, String> {
+    use std::os::windows::process::CommandExt;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("cache")
+        .join("downloads");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // 清洗文件名（避免非法字符）
+    let safe: String = name
+        .chars()
+        .filter(|c| !c.is_ascii_control() && !matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .collect();
+    let safe = if safe.trim().is_empty() { "quickpaste_setup.exe".to_string() } else { safe };
+    let path = dir.join(&safe);
+    if path.exists() {
+        return Ok(path.to_string_lossy().to_string()); // 已下载过
+    }
+    let out = std::process::Command::new("curl")
+        .creation_flags(NO_WINDOW)
+        .args(["-Lfs", "--max-time", "600", "-o"])
+        .arg(&path)
+        .arg(&url)
+        .output()
+        .map_err(|e| format!("无法启动 curl：{e}"))?;
+    if !out.status.success() || !path.exists() {
+        return Err(format!("下载失败（curl exit {}）", out.status.code().unwrap_or(-1)));
+    }
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// 运行已下载的安装包（NSIS / MSI 图形安装向导；应用本体不阻塞）
+#[tauri::command]
+pub fn qp_install_update(path: String) -> Result<(), String> {
+    std::process::Command::new("cmd")
+        .args(["/c", "start", "", &path])
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// 用系统默认浏览器打开网址
