@@ -40,7 +40,7 @@ struct HotkeyState {
 impl Default for HotkeyState {
     fn default() -> Self {
         HotkeyState {
-            cur: Mutex::new(Some("Ctrl+Alt+Z".into())),
+            cur: Mutex::new(Some("Alt+Z".into())),
         }
     }
 }
@@ -123,12 +123,19 @@ pub fn run() {
             if let Ok(v) = std::env::var("QP_SEND_TEST") {
                 net::test_send(app.handle().clone(), &v);
             }
-            // 呼出快捷键（支持设置页修改；默认 Ctrl+Alt+Z）
+            // 呼出快捷键（支持设置页修改；默认 Alt+Z）
             let hotkey = settings::get_key(app.handle(), "hotkey")
                 .ok()
                 .flatten()
                 .and_then(|v| v.as_str().map(|s| s.to_string()))
-                .unwrap_or_else(|| "Ctrl+Alt+Z".into());
+                .unwrap_or_else(|| "Alt+Z".into());
+            // 旧默认 Ctrl+Alt+Z 迁移为新默认 Alt+Z（用户未改过快捷键时保持默认一致）
+            let hotkey = if hotkey == "Ctrl+Alt+Z" {
+                "Alt+Z".to_string()
+            } else {
+                hotkey.clone()
+            };
+            let _ = settings::set_key(app.handle(), "hotkey", serde_json::json!(hotkey));
             apply_hotkey(app.handle(), &hotkey);
             setup_tray(app.handle())?;
             apply_autostart(app)?;
@@ -162,7 +169,7 @@ pub fn run() {
         .expect("QuickPaste 启动失败");
 }
 
-/* ────────────── 热键 Ctrl+Alt+Z（支持动态修改） ────────────── */
+/* ────────────── 热键 Alt+Z（支持动态修改） ────────────── */
 
 /// 注册/切换呼出快捷键：先移除旧组合，再注册新组合
 pub fn apply_hotkey(app: &AppHandle, combo: &str) {
@@ -190,7 +197,7 @@ pub fn apply_hotkey(app: &AppHandle, combo: &str) {
             let _ = app.global_shortcut().unregister(combo);
             let _ = app
                 .global_shortcut()
-                .on_shortcut(prev.as_deref().unwrap_or("Ctrl+Alt+Z"), |app, _sc, ev| {
+                .on_shortcut(prev.as_deref().unwrap_or("Alt+Z"), |app, _sc, ev| {
                     if ev.state() == ShortcutState::Pressed {
                         toggle_main(app);
                     }
