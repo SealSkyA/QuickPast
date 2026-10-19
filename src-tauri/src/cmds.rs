@@ -31,24 +31,16 @@ pub fn open_path(_app: AppHandle, path: String) -> Result<(), String> {
 
 /// 应用缓存目录（高级设置：查看/清空）
 #[tauri::command]
-pub fn qp_cache_dir(app: AppHandle) -> Result<String, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("cache");
+pub fn qp_cache_dir(_app: AppHandle) -> Result<String, String> {
+    let dir = crate::paths::data_root().join("cache");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir.to_string_lossy().to_string())
 }
 
 /// 清空应用缓存目录（图片缩略等），返回已清理的字节数
 #[tauri::command]
-pub fn qp_clear_cache(app: AppHandle) -> Result<u64, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("cache");
+pub fn qp_clear_cache(_app: AppHandle) -> Result<u64, String> {
+    let dir = crate::paths::data_root().join("cache");
     let mut freed = 0u64;
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for e in rd.flatten() {
@@ -99,6 +91,7 @@ pub fn about_info() -> serde_json::Value {
         "version": env!("CARGO_PKG_VERSION"),
         "author": "zhangaiguo",
         "changelog": [
+            {"v":"0.2.0","log":"图片预览独立窗口（屏幕居中/最小化/最大化/关闭）；数据改存安装路径（不再占 C 盘）；覆盖式安装；修复窗口缩放顶栏色线伪影"},
             {"v":"0.1.0","log":"初始版本：剪贴板历史、文件传输（LocalSend 协议）、窗口记忆、全局热键"},
         ],
     })
@@ -167,14 +160,9 @@ pub fn qp_check_update() -> Result<serde_json::Value, String> {
 /// 在线下载新版本安装包（GitHub Release 资产），保存到应用缓存 downloads 目录，返回完整路径。
 /// curl 静默下载（无终端框）；已存在则直接返回。
 #[tauri::command]
-pub fn qp_download_update(app: AppHandle, url: String, name: String) -> Result<String, String> {
+pub fn qp_download_update(_app: AppHandle, url: String, name: String) -> Result<String, String> {
     use std::os::windows::process::CommandExt;
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("cache")
-        .join("downloads");
+    let dir = crate::paths::data_root().join("cache").join("downloads");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     // 清洗文件名（避免非法字符）
     let safe: String = name
@@ -231,6 +219,31 @@ pub fn qp_show_about(app: AppHandle) -> Result<(), String> {
     let _ = w.center(); // 每次呼出保持在屏幕中间
     let _ = w.set_focus();
     Ok(())
+}
+
+/// 显示"图片预览"独立窗口：屏幕居中，顶栏支持最小化/最大化/关闭。
+/// 主窗口点击缩略图时调用：先记录 id（供预览页轮询兜底）再 emit 事件，然后居中显示。
+#[tauri::command]
+pub fn qp_viewer_show(app: AppHandle, id: u64, name: Option<String>) -> Result<(), String> {
+    use tauri::Emitter;
+    const VIEWER_LABEL: &str = "viewer";
+    let w = app
+        .get_webview_window(VIEWER_LABEL)
+        .ok_or_else(|| "viewer 窗口不存在".to_string())?;
+    // 记录当前预览图片 id（viewer 页面轮询兜底，防事件时序丢失）
+    *app.state::<crate::AppState>().viewer_id.lock().unwrap() = Some(id);
+    let _ = w.emit("viewer:show", serde_json::json!({ "id": id, "name": name }));
+    let _ = w.unminimize();
+    let _ = w.show();
+    let _ = w.center();
+    let _ = w.set_focus();
+    Ok(())
+}
+
+/// viewer 页面轮询：返回当前要预览的图片 id（无则 None）
+#[tauri::command]
+pub fn qp_viewer_current_id(app: AppHandle) -> Option<u64> {
+    *app.state::<crate::AppState>().viewer_id.lock().unwrap()
 }
 
 /// 最大化 / 还原（标题栏按钮）

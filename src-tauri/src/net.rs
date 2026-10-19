@@ -405,10 +405,8 @@ fn rcv_dir(app: &AppHandle) -> PathBuf {
     if let Ok(d) = app.path().download_dir() {
         return d;
     }
-    app.path()
-        .app_data_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("downloads")
+    // 数据存放于安装路径下（不占 C 盘 AppData）
+    crate::paths::data_root().join("downloads")
 }
 
 /* ────────────── HTTP 服务器 ────────────── */

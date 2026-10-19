@@ -12,7 +12,7 @@ use clipboard_rs::{Clipboard, common::RustImage};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::settings;
+use crate::{paths, settings};
 
 pub const LIMIT: usize = 600;
 
@@ -134,11 +134,9 @@ impl Default for History {
      file/{id}/…    文件快照（复制副本）
 ──────────────────────────────────────────────────── */
 
-fn data_dir(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_data_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("history")
+fn data_dir(_app: &AppHandle) -> PathBuf {
+    // 数据存放于安装路径下（不占 C 盘 AppData）
+    paths::data_root().join("history")
 }
 
 fn index_path(app: &AppHandle) -> PathBuf {
@@ -742,15 +740,96 @@ pub fn clip_img_path(app: AppHandle, id: u64) -> Result<String, String> {
     }
 }
 
-/// 图片大图（宽 ≤1200）base64，供预览
+/// 另存为：把历史条目（图片/文件）导出到用户指定位置。
+/// 图片 → 源 img/{id}.png 复制到 dest（保存对话框选的文件路径）；
+/// 文件 → 源 file/{id}/ 下所有快照复制到 dest（目录选择框选的目录）。
+#[tauri::command]
+pub fn history_export(app: AppHandle, id: u64, dest: String) -> Result<String, String> {
+    let dest = std::path::PathBuf::from(&dest);
+    let cat = {
+        let st = app.state::<History>();
+        let items = st.items.lock().unwrap();
+        items.iter().find(|x| x.id == id).map(|x| x.cat.clone())
+    };
+    match cat.as_deref() {
+        Some("img") => {
+            let src = img_dir(&app).join(format!("{id}.png"));
+            if !src.exists() {
+                return Err("图片文件不存在".into());
+            }
+            let target = if dest.is_dir() {
+                dest.join("image.png")
+            } else {
+                dest.clone()
+            };
+            std::fs::copy(&src, &target).map_err(|e| format!("另存失败：{e}"))?;
+            Ok(target.to_string_lossy().to_string())
+        }
+        Some("file") => {
+            let src_dir = file_dir(&app).join(id.to_string());
+            if !src_dir.exists() {
+                return Err("文件快照不存在".into());
+            }
+            if dest.is_dir() {
+                let mut n = 0u32;
+                for e in std::fs::read_dir(&src_dir).map_err(|e| e.to_string())? {
+                    let e = e.map_err(|e| e.to_string())?;
+                    let sp = e.path();
+                    if sp.is_file() {
+                        let dp = dest.join(e.file_name());
+                        std::fs::copy(&sp, &dp).map_err(|e| format!("另存失败：{e}"))?;
+                        n += 1;
+                    }
+                }
+                if n == 0 {
+                    return Err("目录内没有文件".into());
+                }
+                Ok(format!("已保存 {n} 个文件"))
+            } else {
+                let files: Vec<_> = std::fs::read_dir(&src_dir)
+                    .map_err(|e| e.to_string())?
+                    .flatten()
+                    .filter(|e| e.path().is_file())
+                    .collect();
+                if files.len() != 1 {
+                    return Err("该条目包含多个文件，请选择保存目录".into());
+                }
+                std::fs::copy(files[0].path(), &dest).map_err(|e| format!("另存失败：{e}"))?;
+                Ok(dest.to_string_lossy().to_string())
+            }
+        }
+        _ => Err("该条目不支持另存为".into()),
+    }
+}
+
+/// 图片大图（宽 ≤1200）base64，供预览。
+/// 无透明通道时用 JPEG 编码（快、体积小）+ data/cache/full 磁盘缓存，二次打开秒开。
 #[tauri::command]
 pub fn clip_img_full(app: AppHandle, id: u64) -> Result<String, String> {
     let p = img_dir(&app).join(format!("{id}.png"));
     let img = image::open(&p).map_err(|e| e.to_string())?;
     let big = img.thumbnail(1200, 1200);
+    let has_alpha = big.color().has_alpha();
+    let ext = if has_alpha { "png" } else { "jpg" };
+    // 缓存：data/cache/full/{id}.{ext}，命中直接复用
+    let cdir = crate::paths::data_root().join("cache/full");
+    let _ = std::fs::create_dir_all(&cdir);
+    let cp = cdir.join(format!("{id}.{ext}"));
+    if cp.exists() {
+        let b = std::fs::read(&cp).map_err(|e| e.to_string())?;
+        return Ok(base64(&b));
+    }
     let mut buf = std::io::Cursor::new(Vec::new());
-    big.write_to(&mut buf, image::ImageOutputFormat::Png)
-        .map_err(|e| e.to_string())?;
+    if has_alpha {
+        big.write_to(&mut buf, image::ImageOutputFormat::Png)
+            .map_err(|e| e.to_string())?;
+    } else {
+        use image::ImageEncoder;
+        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 85);
+        enc.write_image(big.as_bytes(), big.width(), big.height(), big.color().into())
+            .map_err(|e| e.to_string())?;
+    }
+    let _ = std::fs::write(&cp, buf.get_ref());
     Ok(base64(buf.get_ref()))
 }
 

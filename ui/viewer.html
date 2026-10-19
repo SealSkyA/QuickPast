@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>图片预览 · QuickPaste</title>
+<style>
+/* ═══ 新拟物设计令牌（与主界面一致） ═══ */
+*{margin:0;padding:0;box-sizing:border-box;-webkit-user-select:none;user-select:none}
+html{color-scheme:light}
+body{
+  background:#e9edf2;color:#3c4453;
+  display:flex;flex-direction:column;height:100vh;overflow:hidden;
+  font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;
+}
+:root{
+  --bg:#e9edf2;--lt:#ffffff;--sh:#c0c7d2;--line:#cfd6e0;
+  --fg:#3c4453;--mut:#7f8a9b;--acc:#4d6fa4;--ok:#2f8f6d;--warn:#a5762c;--err:#b3524d;
+  --up:-5px -5px 11px var(--lt), 5px 5px 12px var(--sh);
+  --up-sm:-3px -3px 7px var(--lt), 3px 3px 8px var(--sh);
+  --in:inset -4px -4px 8px var(--lt), inset 4px 4px 9px var(--sh);
+  --in-sm:inset -2px -2px 5px var(--lt), inset 2px 2px 6px var(--sh);
+}
+/* 标题栏（拖拽区）：底线用单一不透明色，避免 resize 时 GPU 合成产生色线伪影 */
+.titlebar{display:flex;align-items:center;gap:9px;padding:12px 14px 10px;flex:none;
+  background:var(--bg);border-bottom:1px solid var(--line)}
+.app-ico{width:30px;height:30px;border-radius:9px;background:var(--bg);flex:none;
+  display:flex;align-items:center;justify-content:center;color:var(--acc);box-shadow:var(--in-sm)}
+.titlebar .name{font-size:14px;font-weight:700;color:var(--fg)}
+.iconbtn{width:28px;height:28px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;
+  color:#7f8a9b;background:var(--bg);box-shadow:var(--up-sm);cursor:pointer;transition:.12s}
+.iconbtn:hover{color:var(--fg)}
+.iconbtn:active{box-shadow:var(--in-sm)}
+.iconbtn svg{width:15px;height:15px}
+.iconbtn.close:hover{color:var(--err)}
+/* 图片区：默认 contain 居中；放大后容器变可滚动 + 拖拽平移查看 */
+.vbody{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:16px;overflow:hidden}
+#imgWrap{max-width:100%;max-height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden}
+#imgWrap.zoomed{display:block;overflow:auto;cursor:grab}
+#imgWrap.zoomed.dragging{cursor:grabbing;user-select:none}
+#viewImg{max-width:100%;max-height:100%;object-fit:contain;border-radius:12px;box-shadow:var(--in-sm);
+  display:block;transition:transform .15s ease;cursor:zoom-in}
+#viewImg.zoomed{transform:scale(1.6);transform-origin:top left;cursor:grab;border-radius:0}
+/* 底栏 */
+.foot{display:flex;align-items:center;gap:10px;padding:12px 14px 14px;flex:none}
+.fname{flex:1;min-width:0;font-size:12.5px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+button{height:34px;padding:0 18px;border:none;border-radius:12px;font-size:13px;font-weight:600;
+  background:var(--bg);color:var(--fg);cursor:pointer;box-shadow:var(--up-sm);transition:.12s}
+button:hover{box-shadow:var(--up-sm);color:var(--acc)}
+button:active{box-shadow:var(--in-sm)}
+button.pri{background:var(--acc);color:#fff;box-shadow:-3px -3px 7px var(--lt), 3px 3px 8px rgba(77,111,164,.45)}
+button.pri:active{box-shadow:var(--in)}
+/* toast */
+.toast{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(.96);opacity:0;pointer-events:none;
+  background:#3c4453;color:#fff;font-size:13px;padding:10px 20px;border-radius:999px;transition:.18s;z-index:99;
+  box-shadow:0 6px 20px rgba(60,68,83,.4);white-space:nowrap;max-width:80vw;overflow:hidden;text-overflow:ellipsis}
+.toast.on{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.toast.err{background:var(--err)}
+</style>
+</head>
+<body>
+  <div class="titlebar" data-tauri-drag-region>
+    <div class="app-ico"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>
+    <span class="name" data-tauri-drag-region>图片预览</span>
+    <span style="flex:1" data-tauri-drag-region></span>
+    <div class="iconbtn" title="最小化" onclick="winMin()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></div>
+    <div class="iconbtn" title="放大 / 还原" onclick="winMax()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></div>
+    <div class="iconbtn close" title="关闭" onclick="closeWin()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></div>
+  </div>
+
+  <div class="vbody">
+    <div id="imgWrap">
+      <img id="viewImg" alt="">
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="fname" id="fname"></span>
+    <button class="pri" style="flex:none" onclick="copyImg()">复制图片</button>
+    <button style="flex:none" onclick="closeWin()">关闭</button>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+const { invoke } = window.__TAURI__.core;
+const win = window.__TAURI__.window.getCurrentWindow();
+let currentId = 0;
+let b64 = '';
+
+function toast(msg, err){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.toggle('err', !!err);
+  t.classList.add('on');
+  clearTimeout(t._tm);
+  t._tm = setTimeout(()=>t.classList.remove('on'), 2200);
+}
+function winMin(){ win.minimize().catch(()=>{}); }
+function winMax(){ win.toggleMaximize().catch(()=>{}); }
+function closeWin(){ win.hide().catch(()=>{}); }
+function toggleZoom(){
+  const wrap = document.getElementById('imgWrap');
+  const im = document.getElementById('viewImg');
+  wrap.classList.toggle('zoomed');
+  im.classList.toggle('zoomed');
+  if(wrap.classList.contains('zoomed')){ wrap.scrollLeft = 0; wrap.scrollTop = 0; }
+}
+// 放大后拖拽平移查看（按住左键拖动图片）
+let _drag = null;   // {sx,sy,sl,st}
+const wrapEl = document.getElementById('imgWrap');
+wrapEl.addEventListener('mousedown', e => {
+  if(!wrapEl.classList.contains('zoomed')) return;
+  _drag = { sx: e.clientX, sy: e.clientY, sl: wrapEl.scrollLeft, st: wrapEl.scrollTop };
+  wrapEl.classList.add('dragging');
+  e.preventDefault();
+});
+window.addEventListener('mousemove', e => {
+  if(!_drag) return;
+  wrapEl.scrollLeft = _drag.sl - (e.clientX - _drag.sx);
+  wrapEl.scrollTop  = _drag.st - (e.clientY - _drag.sy);
+});
+window.addEventListener('mouseup', e => {
+  if(!_drag) return;
+  const moved = Math.abs(e.clientX - _drag.sx) + Math.abs(e.clientY - _drag.sy);
+  wrapEl.classList.remove('dragging');
+  _drag = null;
+  // 位移大视为拖动，不触发还原缩放
+  if(moved > 6) document.getElementById('viewImg')._skipClick = true;
+});
+// 单击图片：放大/还原（拖动刚结束时忽略本次 click）
+document.getElementById('viewImg').addEventListener('click', e => {
+  if(e.target._skipClick){ e.target._skipClick = false; return; }
+  toggleZoom();
+});
+
+// 显示指定图片（事件与轮询兜底共用入口）
+function showImage(id, name){
+  currentId = id;
+  const wrap = document.getElementById('imgWrap');
+  const im = document.getElementById('viewImg');
+  wrap.classList.remove('zoomed');
+  im.classList.remove('zoomed');
+  im.removeAttribute('src');
+  const fn = document.getElementById('fname');
+  if(fn) fn.textContent = name || ('图片 #' + id);
+  invoke('clip_img_full', { id: Number(id) })
+    .then(b => {
+      b64 = b || '';
+      if(b64){ im.src = 'data:image/png;base64,' + b64; }
+      else { toast('图片内容读取失败', true); }
+    })
+    .catch(()=>{ toast('图片内容读取失败', true); });
+}
+// 主窗口点击缩略图 → viewer:show 事件（携带图片 id/name）；另有轮询兜底。
+// 注意：Tauri 全局注入与后端 setup 存在时序竞态，监听须等就绪后注册（与主窗口同模式）。
+(function initViewer(){
+  if(!(window.__TAURI__ && window.__TAURI__.event)){
+    setTimeout(initViewer, 100); return;
+  }
+  window.__TAURI__.event.listen('viewer:show', e => {
+    const id = e.payload && e.payload.id;
+    if(!id) return;
+    showImage(Number(id), (e.payload && e.payload.name) || '');
+  }).catch(()=>{ setTimeout(initViewer, 400); });
+  // 轮询兜底：事件可能因页面未就绪而丢失，周期查询后端当前预览 id
+  let last = 0;
+  setInterval(() => {
+    invoke('qp_viewer_current_id')
+      .then(id => { if(id && id !== last){ last = id; showImage(Number(id), ''); } })
+      .catch(()=>{});
+  }, 500);
+})();
+
+// 复制当前预览的图片到剪贴板
+function copyImg(){
+  if(!currentId) return;
+  invoke('clipboard_set_img', { id: currentId })
+    .then(()=>toast('已复制到剪贴板'))
+    .catch(()=>toast('复制失败', true));
+}
+</script>
+</body>
+</html>

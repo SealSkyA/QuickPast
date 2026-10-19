@@ -57,7 +57,7 @@ body{
   display:flex;flex-direction:column;animation:winIn .25s ease}
 #win-set .setwrap{flex:1;overflow-y:auto;min-height:0}
 .titlebar{display:flex;align-items:center;gap:4px;padding:9px 10px 9px 14px;
-  border-bottom:1px solid var(--lt);box-shadow:0 1px 0 rgba(192,199,210,.5)}
+  background:var(--bg);border-bottom:1px solid var(--line)}
 .t-brand{display:flex;gap:10px;align-items:stretch;margin-right:auto}
 .t-tab{display:flex;align-items:center;gap:6px;padding:7px 14px;border-radius:11px;cursor:pointer;
   font-size:13.5px;font-weight:600;color:var(--mut);box-shadow:var(--up-sm);
@@ -426,7 +426,7 @@ button:disabled{opacity:.45;box-shadow:none}
         </div>
       </div>
       <div class="footerbar" oncontextmenu="footerCtx(event)">
-        <span><b id="hotkeyTxt">Alt+Z</b> 呼出</span><span>·</span>
+        <span><b id="hotkeyTxt">Ctrl+Alt+Z</b> 呼出</span><span>·</span>
         <span>单击复制</span><span>·</span>
         <span>右击更多</span><span>·</span>
         <span><b>Delete</b> 删除</span>
@@ -539,7 +539,7 @@ button:disabled{opacity:.45;box-shadow:none}
         <div class="row"><div class="lbl"><b>文字数量上限</b><span>文字历史最多保留的条数，超出删最早</span></div><div class="ctl"><input type="number" id="textLimitSel" value="200" min="50" max="2000"></div></div>
         <div class="row"><div class="lbl"><b>图片数量上限</b><span>图片历史最多保留的条数，超出删最早</span></div><div class="ctl"><input type="number" id="imgLimitSel" value="200" min="20" max="1000"></div></div>
         <div class="row"><div class="lbl"><b>文件数量上限</b><span>文件历史最多保留的条数，超出删最早</span></div><div class="ctl"><input type="number" id="fileLimitSel" value="100" min="20" max="1000"></div></div>
-        <div class="row"><div class="lbl"><b>呼出快捷键</b><span>点击输入框后按下新的组合键录制</span></div><div class="ctl"><input type="text" id="hotkeyInput" value="Alt+Z" placeholder="点击后按组合键" onfocus="hotkeyFocus(this)" onkeydown="hotkeyKeydown(event)" onblur="hotkeyBlur()" style="width:132px;text-align:center;font-family:ui-monospace,monospace"></div></div>
+        <div class="row"><div class="lbl"><b>呼出快捷键</b><span>点击输入框后按下新的组合键录制</span></div><div class="ctl"><input type="text" id="hotkeyInput" value="Ctrl+Alt+Z" placeholder="点击后按组合键" onfocus="hotkeyFocus(this)" onkeydown="hotkeyKeydown(event)" onblur="hotkeyBlur()" style="width:132px;text-align:center;font-family:ui-monospace,monospace"></div></div>
         <div class="row"><div class="lbl"><b>单击行为</b><span>点击历史卡片后的动作</span></div><div class="ctl"><select><option>复制并粘贴</option><option>仅复制至剪切板</option></select></div></div>
         <div class="row"><div class="lbl"><b>默认分类</b><span>启动时定位到该分类（默认全部）</span></div><div class="ctl"><select id="defCatSel"><option value="all">全部</option><option value="text">文字</option><option value="img">图片</option><option value="file">文件</option><option value="fav">收藏</option><option value="note">便签</option></select></div></div>
         <div class="row"><div class="lbl"><b>页面字号</b><span>界面文字大小（12 – 20）</span></div><div class="ctl"><input type="number" id="fontSizeSel" value="14" min="12" max="20"></div></div>
@@ -656,7 +656,7 @@ let catNow = 'all', editMode = false, picked = [];
 let MENUS = {
   text:['复制','复制格式','收藏','置顶','修改','删除'],
   img:['复制','发送给设备','收藏','置顶','修改','删除','另存为'],
-  file:['复制','收藏','置顶','修改','删除','打开文件位置'],
+  file:['复制','另存为','收藏','置顶','修改','删除','打开文件位置'],
   note:['复制','收藏','修改','删除']
 };
 let DEVS = [];  // 附近设备（S3：真实数据由 net_devices / qp:devices 填充；无 Tauri 时用演示数据）
@@ -693,7 +693,7 @@ function trayMenu(act){
   if(act==='close'){
     // ×：隐藏到系统托盘（任务栏不留，进程常驻；托盘/热键可再呼出）
     if(window.QP){ qpInvoke('qp_window_hide').catch(()=>toast('已隐藏到托盘')); return; }
-    toast('已隐藏到系统托盘（再次按 Alt+Z 呼出）');
+    toast('已隐藏到系统托盘（再次按 Ctrl+Alt+Z 呼出）');
     return;
   }
   if(act==='max'){
@@ -866,25 +866,12 @@ function fillThumb(el){
 let currentZoomId = 0;
 let _zoomScale = 1; // 预览放大倍数（1 → 1.5 → 2 → 3 循环）
 let _zoomDismiss = null; // 图片预览：点击模态外区域关闭
+/* 图片大图预览：独立窗口（屏幕居中，顶栏支持最小化/最大化/关闭） */
 function zoomImage(id){
   currentZoomId = id;
-  _zoomScale = 1; // 新图重置缩放
   const d = DATA.find(x=>x.id===id);
-  const nm = document.getElementById('zoomName');
-  if(nm) nm.textContent = d ? ' · '+d.name : '';
-  const im = document.getElementById('zoomImg');
-  const m = document.getElementById('m-zoom');
-  m.style.width = ''; m.style.height = ''; // 恢复默认弹窗尺寸
-  im.style.maxHeight = ''; // 恢复图片 58vh 限制
-  const lb = document.getElementById('zoomLb'); if(lb) lb.textContent = '×1';
-  qpInvoke('clip_img_full',{id})
-    .then(b64=>{ if(b64) im.src='data:image/png;base64,'+b64; })
-    .catch(()=>{});
-  // 轻量预览：不显示全屏暗色遮罩，点击模态外区域即关闭
-  m.classList.add('on');
-  if(_zoomDismiss) document.removeEventListener('click', _zoomDismiss, true);
-  _zoomDismiss = function(e){ if(!m.contains(e.target)) closeModal('m-zoom'); };
-  document.addEventListener('click', _zoomDismiss, true);
+  qpInvoke('qp_viewer_show',{id:Number(id), name:(d&&d.name)||''})
+    .catch(()=>{ closeModal('m-zoom'); });
 }
 /* 放大缩小：弹窗与图片随倍率一起放大（×1 → ×1.5 → ×2 → ×3 循环） */
 function zoomStep(){
@@ -978,8 +965,30 @@ function cardMenuAction(id, act){
   else if(act==='删除') delOne(id);
   else if(act==='修改'){ closeAllPopup(); editItem(id); return; }
   else if(act==='打开文件位置'){ openFileLocation(id); }
+  else if(act==='另存为'){ saveAs(id); }
   else toast(act+'（待实施）');
   closeAllPopup();
+}
+/* 另存为：图片→选择文件路径；文件条目→选择保存目录（多文件快照整体导出） */
+async function saveAs(id){
+  const d = DATA.find(x=>x.id===id); if(!d) return;
+  // 优先用 Tauri 全局 dialog API（已确认存在），兜底走插件命令
+  const dlg = (window.__TAURI__ && window.__TAURI__.dialog) || null;
+  const dlgsave = (o) => dlg ? dlg.save(o) : qpInvoke('plugin:dialog|save', {options:o});
+  const dlgopen = (o) => dlg ? dlg.open(o) : qpInvoke('plugin:dialog|open', {options:o});
+  try{
+    if(d.cat==='img'){
+      const dest = await dlgsave({defaultPath:d.name||'image.png', title:'另存为'});
+      if(!dest) return;
+      qpInvoke('history_export',{id, dest}).then(()=>toast('已另存为')).catch(e=>toast('另存为失败：'+(e||''),true));
+    } else if(d.cat==='file'){
+      const dir = await dlgopen({directory:true, title:'选择保存目录'});
+      if(!dir) return;
+      qpInvoke('history_export',{id, dest:dir}).then(()=>toast('已保存到：'+dir)).catch(e=>toast('保存失败：'+(e||''),true));
+    } else {
+      toast('该条目不支持另存为', true);
+    }
+  }catch(e){ toast('另存为失败：'+(e||''), true); }
 }
 /* 复制为富文本（HTML 格式；无格式时回退纯文本） */
 function copyRich(id){
@@ -1161,9 +1170,9 @@ function hotkeyKeydown(e){
   const el = document.getElementById('hotkeyInput');
   if(!recHot || !el) return;
   e.preventDefault(); e.stopPropagation();
-  if(e.key === 'Escape'){ el.value='Alt+Z'; recHot=false; el.classList.remove('rec'); el.blur(); return; }
+  if(e.key === 'Escape'){ el.value='Ctrl+Alt+Z'; recHot=false; el.classList.remove('rec'); el.blur(); return; }
   if(e.key === 'Enter'){ recHot=false; el.classList.remove('rec'); el.blur(); 
-    const txt=el.value || 'Alt+Z';
+    const txt=el.value || 'Ctrl+Alt+Z';
     const ft=document.getElementById('hotkeyTxt'); if(ft) ft.textContent=txt;
     qpInvoke('qp_set_hotkey',{combo:txt}).catch(()=>toast('快捷键注册失败，可能已被占用'));
     toast('呼出快捷键已更新为 '+txt); return; }
@@ -1429,10 +1438,6 @@ renderList(); renderDevs();
     const d = e.target.getAttribute('data-d');
     if (!d) return;
     e.preventDefault();
-    /* 临时可视反馈：任意热区按下 → titlebar 红框（验证事件链路） */
-    document.querySelector('.titlebar').style.outline = '2px solid red';
-    /* 临时对照：se 热区按下 → 触发 debug 缩放（若窗口变大说明事件链路 OK） */
-    if (d === 'se') { T.core.invoke('qp_debug_resize').catch(() => {}); return; }
     T.core.invoke('qp_resize_begin', { direction: d }).catch(() => {});
   });
 

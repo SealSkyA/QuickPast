@@ -4,6 +4,7 @@
 pub mod cmds;
 pub mod history;
 pub mod net;
+pub mod paths;
 pub mod settings;
 
 use std::sync::Mutex;
@@ -24,6 +25,8 @@ struct AppState {
     /// 用户从历史列表点击复制的内容指纹：watcher 检测到相同内容时
     /// 不新增、不移动、不去重（保持列表与序号不变），只保留"上次复制"标记
     last_copied: Mutex<Option<history::ClipKey>>,
+    /// 当前预览窗口要显示的图片 id（viewer 页面轮询兜底，防事件时序丢失）
+    viewer_id: Mutex<Option<u64>>,
 }
 
 impl Default for AppState {
@@ -32,6 +35,7 @@ impl Default for AppState {
             // 初始为“很久以前”，保证启动后的首次窗口事件立即触发保存
             geom_saved_at: Mutex::new(Instant::now() - Duration::from_secs(3600)),
             last_copied: Mutex::new(None),
+            viewer_id: Mutex::new(None),
         }
     }
 }
@@ -60,7 +64,14 @@ struct GeomValue {
 
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_store::Builder::default().build())
+        // 单实例：已运行时再次启动（双击图标/快捷方式）→ 呼出主窗口，不重复开进程
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window(MAIN_LABEL) {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_dialog::init())
@@ -86,6 +97,8 @@ pub fn run() {
             cmds::qp_install_update,
             cmds::qp_open_url,
             cmds::qp_show_about,
+            cmds::qp_viewer_show,
+            cmds::qp_viewer_current_id,
             history::history_load,
             history::history_remove,
             history::history_clear,
@@ -93,6 +106,7 @@ pub fn run() {
             history::history_pin,
             history::history_edit,
             history::history_add_note,
+            history::history_export,
             history::history_apply_limits,
             history::history_mark_last,
             history::clipboard_set_text,
@@ -117,6 +131,8 @@ pub fn run() {
             net::net_my_info
         ])
         .setup(|app| {
+            // 数据迁移：旧版本数据在 C 盘 AppData，新版本统一存安装路径 → 一次性复制
+            migrate_data(app.handle());
             // S1 剪贴板历史：载入持久化数据（含存量去重）并启动监听
             let loaded = history::load_items(app.handle());
             {
@@ -134,15 +150,15 @@ pub fn run() {
             if let Ok(v) = std::env::var("QP_SEND_TEST") {
                 net::test_send(app.handle().clone(), &v);
             }
-            // 呼出快捷键（支持设置页修改；默认 Alt+Z）
+            // 呼出快捷键（支持设置页修改；默认 Ctrl+Alt+Z）
             let hotkey = settings::get_key(app.handle(), "hotkey")
                 .ok()
                 .flatten()
                 .and_then(|v| v.as_str().map(|s| s.to_string()))
-                .unwrap_or_else(|| "Alt+Z".into());
-            // 旧默认 Ctrl+Alt+Z 迁移为新默认 Alt+Z（用户未改过快捷键时保持默认一致）
-            let hotkey = if hotkey == "Ctrl+Alt+Z" {
-                "Alt+Z".to_string()
+                .unwrap_or_else(|| "Ctrl+Alt+Z".into());
+            // 旧默认 Alt+Z 迁移为新默认 Ctrl+Alt+Z（用户未改过快捷键时保持默认一致）
+            let hotkey = if hotkey == "Alt+Z" {
+                "Ctrl+Alt+Z".to_string()
             } else {
                 hotkey.clone()
             };
@@ -208,7 +224,7 @@ pub fn apply_hotkey(app: &AppHandle, combo: &str) {
             let _ = app.global_shortcut().unregister(combo);
             let _ = app
                 .global_shortcut()
-                .on_shortcut(prev.as_deref().unwrap_or("Alt+Z"), |app, _sc, ev| {
+                .on_shortcut(prev.as_deref().unwrap_or("Ctrl+Alt+Z"), |app, _sc, ev| {
                     if ev.state() == ShortcutState::Pressed {
                         toggle_main(app);
                     }
@@ -334,4 +350,55 @@ fn apply_autostart(app: &mut App) -> tauri::Result<()> {
         let _ = app.autolaunch().enable();
     }
     Ok(())
+}
+
+/* ────────────── 数据迁移：AppData(C盘) → 安装路径 ────────────── */
+
+/// 旧版本数据在 C 盘 AppData（com.qpaste.quickpaste）；新版本统一存安装路径。
+/// 逐项补齐：新位置缺失的项才复制，已有数据保留（可重复调用，天然幂等）。
+fn migrate_data(app: &AppHandle) {
+    let new_root = paths::data_root();
+    let old = match app.path().app_data_dir() {
+        Ok(o) if o != new_root && o.exists() => o,
+        _ => return,
+    };
+    // settings.json
+    if !new_root.join(settings::SETTINGS_FILE).exists() {
+        let _ = std::fs::copy(old.join(settings::SETTINGS_FILE), new_root.join(settings::SETTINGS_FILE));
+    }
+    // history：逐项补齐（不覆盖已有文件）
+    if let Ok(entries) = std::fs::read_dir(old.join("history")) {
+        let hdst = new_root.join("history");
+        for e in entries.flatten() {
+            let dp = hdst.join(e.file_name());
+            if !dp.exists() {
+                if e.path().is_dir() {
+                    copy_dir_all(&e.path(), &dp);
+                } else if e.metadata().map(|m| m.is_file()).unwrap_or(false) {
+                    let _ = std::fs::copy(e.path(), &dp);
+                }
+            }
+        }
+    }
+    // cache / downloads：缺失才整体复制
+    for name in ["cache", "downloads"] {
+        if !new_root.join(name).exists() {
+            copy_dir_all(&old.join(name), &new_root.join(name));
+        }
+    }
+}
+
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
+    if let Ok(entries) = std::fs::read_dir(src) {
+        let _ = std::fs::create_dir_all(dst);
+        for e in entries.flatten() {
+            let sp = e.path();
+            let dp = dst.join(e.file_name());
+            if sp.is_dir() {
+                copy_dir_all(&sp, &dp);
+            } else {
+                let _ = std::fs::copy(&sp, &dp);
+            }
+        }
+    }
 }
