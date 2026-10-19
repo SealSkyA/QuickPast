@@ -15,3 +15,6 @@ Desktop.ini
 
 # Edge 璋冭瘯涓存椂鐢ㄦ埛鏁版嵁鐩綍
 /tools/edge-tmp/
+# token-tracker 运行时数据
+token-tracker/data/
+
