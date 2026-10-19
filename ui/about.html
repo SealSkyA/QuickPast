@@ -42,7 +42,7 @@ body{
   border-radius:12px;background:var(--bg);box-shadow:var(--in);padding:11px 13px;
   font-size:12.5px;color:var(--fg);line-height:1.75;outline:none;overflow:auto;-webkit-user-select:text;user-select:text}
 /* 底栏 */
-.foot{display:flex;align-items:center;gap:10px;padding:12px 16px 14px;flex:none}
+.foot{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 16px 14px;flex:none}
 button{height:34px;padding:0 18px;border:none;border-radius:12px;font-size:13px;font-weight:600;
   background:var(--bg);color:var(--fg);cursor:pointer;box-shadow:var(--up-sm);transition:.12s}
 button:hover{box-shadow:var(--up-sm);color:var(--acc)}
@@ -76,6 +76,12 @@ button.pri:active{box-shadow:var(--in)}
   </div>
 
   <div class="foot">
+    <div id="progWrap" style="display:none;align-items:center;gap:8px;width:100%;margin-bottom:2px">
+      <div style="flex:1;height:9px;border-radius:999px;background:var(--bg);box-shadow:var(--in);overflow:hidden">
+        <div id="progBar" style="height:100%;width:0%;background:var(--acc);border-radius:999px;transition:width .25s"></div>
+      </div>
+      <span id="progTxt" style="font-size:11.5px;color:var(--mut);white-space:nowrap;min-width:44px;text-align:right;font-variant-numeric:tabular-nums">0%</span>
+    </div>
     <button class="pri" id="btnUpdate" style="min-width:118px;flex:none" onclick="onUpdate()">在线更新</button>
     <span style="flex:1"></span>
     <button onclick="closeWin()">关闭</button>
@@ -111,6 +117,20 @@ let downloaded = null;   // 已下载的安装包路径
 let busy = false;        // 检查/下载进行中
 const btnUpdate = document.getElementById('btnUpdate');
 function setBtn(txt, dis){ btnUpdate.textContent = txt; btnUpdate.disabled = !!dis; }
+/* 下载进度条：p<0 隐藏，0~1 显示百分比 */
+function setProg(p){
+  const w = document.getElementById('progWrap');
+  const b = document.getElementById('progBar');
+  const t = document.getElementById('progTxt');
+  if(!w||!b||!t) return;
+  if(p >= 0){
+    w.style.display = 'flex';
+    b.style.width = Math.min(100, Math.round(p*100)) + '%';
+    t.textContent = Math.round(p*100) + '%';
+  } else {
+    w.style.display = 'none'; b.style.width = '0%'; t.textContent = '';
+  }
+}
 function checkUpdate(){
   if(busy) return;
   busy = true; setBtn('检查中…', true);
@@ -140,16 +160,30 @@ function downloadUpdate(){
     setTimeout(()=>invoke('qp_open_url',{url:'https://github.com/SealSkyA/QuickPast/releases'}).catch(()=>{}), 1200);
     return;
   }
-  busy = true; setBtn('下载中…', true);
-  invoke('qp_download_update',{url:upd.assetUrl, name:upd.assetName})
-    .then(p=>{
-      busy = false; downloaded = p;
-      setBtn('下载完成，点击安装', false);
-      toast('已下载：'+upd.assetName);
+  busy = true; setBtn('下载中…', true); setProg(0);
+  // 异步下载：立即返回（后台线程 + 镜像加速），进度轮询 qp_download_progress
+  invoke('qp_download_update',{url:upd.assetUrl, name:upd.assetName, size:upd.assetSize||0})
+    .then(()=>{
+      const tm = setInterval(()=>{
+        invoke('qp_download_progress').then(p=>{
+          if(!p) return;
+          if(p.phase === 'done'){
+            clearInterval(tm); busy = false; downloaded = p.path;
+            setBtn('下载完成，点击安装', false); setProg(1);
+            toast('已下载：'+(upd.assetName||'安装包'));
+          } else if(p.phase === 'error'){
+            clearInterval(tm); busy = false;
+            setBtn('重试下载', false); setProg(-1);
+            toast('下载失败：'+(p.error||'网络异常'), true);
+          } else {
+            if(p.size > 0) setProg(Math.min(1, p.written / p.size));
+          }
+        }).catch(()=>{});
+      }, 400);
     })
     .catch(e=>{
       busy = false;
-      setBtn('重试下载', false);
+      setBtn('重试下载', false); setProg(-1);
       toast('下载失败：'+(e||'网络异常'), true);
     });
 }

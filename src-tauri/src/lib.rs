@@ -14,7 +14,6 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, Size, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 pub const MAIN_LABEL: &str = "main";
 const GEOM_KEY: &str = "window.geometry";
@@ -40,19 +39,23 @@ impl Default for AppState {
     }
 }
 
-/// 当前注册的呼出快捷键（支持设置页动态修改）
-struct HotkeyState {
-    cur: Mutex<Option<String>>,
+/// 在线更新安装包下载状态（前端轮询进度）
+#[derive(Default)]
+pub struct DownloadState {
+    pub inner: Mutex<DownloadStateInner>,
 }
 
-impl Default for HotkeyState {
-    fn default() -> Self {
-        HotkeyState {
-            // 初始 None：表示尚未注册任何热键，首次 apply_hotkey 必须真正注册
-            cur: Mutex::new(None),
-        }
-    }
+#[derive(Default)]
+pub struct DownloadStateInner {
+    pub phase: String,          // idle | downloading | done | error
+    pub size: u64,              // 安装包总大小（字节，0=未知）
+    pub path: Option<String>,   // 下载完成后的完整路径
+    pub error: Option<String>,  // 失败原因
+    pub tmp: Option<std::path::PathBuf>, // 下载中临时文件路径（用于统计进度）
 }
+
+/// 当前注册的呼出快捷键（支持设置页动态修改）
+// （v0.3.0 移除全局快捷键，呼出仅保留系统托盘）
 
 #[derive(serde::Deserialize, Clone, Copy)]
 struct GeomValue {
@@ -72,12 +75,11 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }))
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
-        .manage(HotkeyState::default())
         .manage(history::History::default())
+        .manage(DownloadState::default())
         .manage(net::NetState::default())
         .invoke_handler(tauri::generate_handler![
             cmds::get_setting,
@@ -88,12 +90,12 @@ pub fn run() {
             cmds::qp_clear_cache,
             cmds::qp_resize_begin,
             cmds::qp_debug_resize,
-            cmds::qp_set_hotkey,
             cmds::qp_window_hide,
             cmds::qp_window_toggle_max,
             cmds::about_info,
             cmds::qp_check_update,
             cmds::qp_download_update,
+            cmds::qp_download_progress,
             cmds::qp_install_update,
             cmds::qp_open_url,
             cmds::qp_show_about,
@@ -150,20 +152,7 @@ pub fn run() {
             if let Ok(v) = std::env::var("QP_SEND_TEST") {
                 net::test_send(app.handle().clone(), &v);
             }
-            // 呼出快捷键（支持设置页修改；默认 Ctrl+Alt+Z）
-            let hotkey = settings::get_key(app.handle(), "hotkey")
-                .ok()
-                .flatten()
-                .and_then(|v| v.as_str().map(|s| s.to_string()))
-                .unwrap_or_else(|| "Ctrl+Alt+Z".into());
-            // 旧默认 Alt+Z 迁移为新默认 Ctrl+Alt+Z（用户未改过快捷键时保持默认一致）
-            let hotkey = if hotkey == "Alt+Z" {
-                "Ctrl+Alt+Z".to_string()
-            } else {
-                hotkey.clone()
-            };
-            let _ = settings::set_key(app.handle(), "hotkey", serde_json::json!(hotkey));
-            apply_hotkey(app.handle(), &hotkey);
+            // 呼出仅保留系统托盘（v0.3.0 起移除全局快捷键）
             setup_tray(app.handle())?;
             apply_autostart(app)?;
             restore_geometry(app)?;
@@ -194,45 +183,6 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("QuickPaste 启动失败");
-}
-
-/* ────────────── 热键 Alt+Z（支持动态修改） ────────────── */
-
-/// 注册/切换呼出快捷键：先移除旧组合，再注册新组合
-pub fn apply_hotkey(app: &AppHandle, combo: &str) {
-    let st = app.state::<HotkeyState>();
-    let prev = st.cur.lock().unwrap().clone();
-    if let Some(ref p) = prev {
-        if p == combo {
-            return;
-        }
-        let _ = app.global_shortcut().unregister(p.as_str());
-    }
-    let ok = app
-        .global_shortcut()
-        .on_shortcut(combo, |app, _sc, ev| {
-            if ev.state() == ShortcutState::Pressed {
-                toggle_main(app);
-            }
-        });
-    match ok {
-        Ok(_) => {
-            *st.cur.lock().unwrap() = Some(combo.to_string());
-        }
-        Err(_e) => {
-            // 新组合注册失败：回退旧组合
-            let _ = app.global_shortcut().unregister(combo);
-            let _ = app
-                .global_shortcut()
-                .on_shortcut(prev.as_deref().unwrap_or("Ctrl+Alt+Z"), |app, _sc, ev| {
-                    if ev.state() == ShortcutState::Pressed {
-                        toggle_main(app);
-                    }
-                });
-            *st.cur.lock().unwrap() = prev;
-            let _ = settings::set_key(app, "hotkey", serde_json::json!(st.cur.lock().unwrap().clone().unwrap_or_default()));
-        }
-    }
 }
 
 /* ────────────── 系统托盘：图标 + 右击菜单 ────────────── */

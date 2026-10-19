@@ -12,7 +12,7 @@
       {
         "label": "main",
         "title": "QuickPaste",
-        "url": "index.html?v=4",
+        "url": "index.html?v=6",
         "width": 860,
         "height": 600,
         "minWidth": 600,
@@ -25,7 +25,7 @@
       {
         "label": "about",
         "title": "关于与升级",
-        "url": "about.html?v=2",
+        "url": "about.html?v=3",
         "width": 520,
         "height": 560,
         "minWidth": 420,

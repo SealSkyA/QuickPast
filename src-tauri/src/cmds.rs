@@ -65,12 +65,7 @@ pub fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-/// 动态修改呼出快捷键（设置页录制后调用）
-#[tauri::command]
-pub fn qp_set_hotkey(app: AppHandle, combo: String) -> Result<(), String> {
-    crate::apply_hotkey(&app, &combo);
-    settings::set_key(&app, "hotkey", Value::String(combo)).map_err(|e| e.to_string())
-}
+/// 应用缓存目录（高级设置：查看/清空）
 
 /// 主窗口隐藏到系统托盘（点 × 不退出应用，任务栏不留；托盘/热键可再呼出）
 #[tauri::command]
@@ -135,6 +130,7 @@ pub fn qp_check_update() -> Result<serde_json::Value, String> {
     // 优先选安装包资产（.exe / .msi）
     let mut asset_name = String::new();
     let mut asset_url = String::new();
+    let mut asset_size: u64 = 0;
     if let Some(arr) = v.get("assets").and_then(|a| a.as_array()) {
         for a in arr {
             let name = a.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -142,6 +138,7 @@ pub fn qp_check_update() -> Result<serde_json::Value, String> {
             if (name.ends_with(".exe") || name.ends_with(".msi")) && !url.is_empty() {
                 asset_name = name.to_string();
                 asset_url = url.to_string();
+                asset_size = a.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
                 break;
             }
         }
@@ -154,14 +151,20 @@ pub fn qp_check_update() -> Result<serde_json::Value, String> {
         "url": "https://github.com/SealSkyA/QuickPast/releases",
         "assetName": asset_name,
         "assetUrl": asset_url,
+        "assetSize": asset_size,
     })).map_err(|e| e.to_string())
 }
 
-/// 在线下载新版本安装包（GitHub Release 资产），保存到应用缓存 downloads 目录，返回完整路径。
-/// curl 静默下载（无终端框）；已存在则直接返回。
+/// 在线下载新版本安装包（GitHub Release 资产），保存到应用缓存 downloads 目录。
+/// 异步执行（后台线程 + 官方地址/加速镜像依次尝试），前端轮询 qp_download_progress 获取进度。
+/// 已下载过（或正在下载）时直接返回。
 #[tauri::command]
-pub fn qp_download_update(_app: AppHandle, url: String, name: String) -> Result<String, String> {
-    use std::os::windows::process::CommandExt;
+pub fn qp_download_update(
+    app: AppHandle,
+    url: String,
+    name: String,
+    size: Option<u64>,
+) -> Result<String, String> {
     let dir = crate::paths::data_root().join("cache").join("downloads");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     // 清洗文件名（避免非法字符）
@@ -174,17 +177,107 @@ pub fn qp_download_update(_app: AppHandle, url: String, name: String) -> Result<
     if path.exists() {
         return Ok(path.to_string_lossy().to_string()); // 已下载过
     }
-    let out = std::process::Command::new("curl")
-        .creation_flags(NO_WINDOW)
-        .args(["-Lfs", "--max-time", "600", "-o"])
-        .arg(&path)
-        .arg(&url)
-        .output()
-        .map_err(|e| format!("无法启动 curl：{e}"))?;
-    if !out.status.success() || !path.exists() {
-        return Err(format!("下载失败（curl exit {}）", out.status.code().unwrap_or(-1)));
+    let st = app.state::<crate::DownloadState>();
+    {
+        let mut d = st.inner.lock().unwrap();
+        if d.phase == "downloading" {
+            return Err("已在下载中，请稍候".into());
+        }
+        d.phase = "downloading".into();
+        d.size = size.unwrap_or(0);
+        d.path = None;
+        d.error = None;
+        d.tmp = None;
     }
-    Ok(path.to_string_lossy().to_string())
+    let ret = path.to_string_lossy().to_string();
+    std::thread::spawn(move || {
+        // 后台线程内通过 app 取状态（AppHandle 自身随闭包存活）
+        {
+            let st = app.state::<crate::DownloadState>();
+            let mut d = st.inner.lock().unwrap();
+            d.tmp = Some(path.with_extension("part"));
+        }
+        let res = do_download(&url, &path);
+        let st = app.state::<crate::DownloadState>();
+        let mut d = st.inner.lock().unwrap();
+        match res {
+            Ok(p) => {
+                d.phase = "done".into();
+                d.path = Some(p);
+                d.tmp = None;
+            }
+            Err(e) => {
+                d.phase = "error".into();
+                d.error = Some(e);
+                d.tmp = None;
+            }
+        }
+    });
+    Ok(ret)
+}
+
+/// 查询安装包下载进度（前端每 400ms 轮询）
+#[tauri::command]
+pub fn qp_download_progress(app: AppHandle) -> serde_json::Value {
+    let st = app.state::<crate::DownloadState>();
+    let d = st.inner.lock().unwrap();
+    // 下载中：以临时文件当前大小作为已下载字节数（近似进度）
+    let written = if d.phase == "downloading" {
+        d.tmp
+            .as_ref()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .map(|m| m.len())
+            .unwrap_or(0)
+    } else {
+        d.path.as_ref().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len()).unwrap_or(0)
+    };
+    serde_json::json!({
+        "phase": d.phase,
+        "written": written,
+        "size": d.size,
+        "path": d.path,
+        "error": d.error,
+    })
+}
+
+/// GitHub 下载加速镜像前缀（依次尝试：官方地址 → 镜像，提高国内可达性）
+const GH_MIRRORS: [&str; 4] = [
+    "https://ghfast.top/",
+    "https://ghproxy.net/",
+    "https://gh-proxy.com/",
+    "https://mirror.ghproxy.com/",
+];
+
+fn do_download(url: &str, path: &std::path::Path) -> Result<String, String> {
+    use std::os::windows::process::CommandExt;
+    let tmp = path.with_extension("part");
+    let mut candidates: Vec<String> = Vec::with_capacity(1 + GH_MIRRORS.len());
+    candidates.push(url.to_string());
+    for m in GH_MIRRORS {
+        candidates.push(format!("{m}{url}"));
+    }
+    for cand in &candidates {
+        let _ = std::fs::remove_file(&tmp);
+        let out = std::process::Command::new("curl")
+            .creation_flags(NO_WINDOW)
+            .args(["-Lfs", "--connect-timeout", "8", "--max-time", "300", "-o"])
+            .arg(&tmp)
+            .arg(cand)
+            .output();
+        match out {
+            Ok(o) if o.status.success() && tmp.exists() => {
+                let len = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+                // 镜像返回错误页/极小响应视为失败，继续下一候选
+                if len < 4096 {
+                    continue;
+                }
+                let _ = std::fs::rename(&tmp, path);
+                return Ok(path.to_string_lossy().to_string());
+            }
+            _ => continue,
+        }
+    }
+    Err("下载失败：无法连接下载服务器，请检查网络后重试".into())
 }
 
 /// 运行已下载的安装包（NSIS / MSI 图形安装向导；应用本体不阻塞）

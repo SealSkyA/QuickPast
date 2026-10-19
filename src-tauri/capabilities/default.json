@@ -29,7 +29,6 @@
     "core:webview:default",
     "core:app:default",
     "core:event:default",
-    "global-shortcut:default",
     "autostart:default",
     "dialog:default"
   ]

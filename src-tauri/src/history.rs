@@ -394,7 +394,12 @@ pub fn spawn_watcher(app: AppHandle) {
             }
             "img" => {
                 if let Some(img) = img {
-                    let _ = persist_img(&app, items[0].id, &img);
+                    if let Err(e) = persist_img(&app, items[0].id, &img) {
+                        // 微信等来源的位图变体：save_to_path 可能失败，
+                        // 降级用 RGBA8 手工重编码（保证缩略图/粘贴可用）
+                        eprintln!("img save failed: {e}, fallback rgba8");
+                        fallback_persist_img(&app, items[0].id, &img);
+                    }
                 }
             }
             _ => {}
@@ -511,6 +516,15 @@ pub fn persist_img(
     img.save_to_path(p.to_str().unwrap_or(""))
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// save_to_path 失败的降级方案：解码为 RGBA8 后用 image crate 重编码 PNG
+fn fallback_persist_img(app: &AppHandle, id: u64, img: &clipboard_rs::RustImageData) {
+    let Ok(rgba) = img.to_rgba8() else { return };
+    let (w, h) = (rgba.width(), rgba.height());
+    let raw = rgba.into_raw();
+    let Some(rgbaimg) = image::RgbaImage::from_raw(w, h, raw) else { return };
+    let _ = rgbaimg.save(img_dir(app).join(format!("{id}.png")));
 }
 
 /* ────────────── IPC 命令 ────────────── */
@@ -720,7 +734,21 @@ pub fn clipboard_set_img(app: AppHandle, id: u64) -> Result<(), String> {
 #[tauri::command]
 pub fn clip_img_b64(app: AppHandle, id: u64) -> Result<String, String> {
     let p = img_dir(&app).join(format!("{id}.png"));
-    let img = image::open(&p).map_err(|e| e.to_string())?;
+    // image crate 直接解码；个别来源（如微信位图变体）生成的 PNG 非标准时，
+    // 降级用 clipboard_rs 重新解析（与系统剪贴板兼容度更高）
+    let img = match image::open(&p) {
+        Ok(i) => i,
+        Err(_) => {
+            let rd = clipboard_rs::RustImageData::from_path(p.to_str().unwrap_or(""))
+                .map_err(|e| format!("图片解码失败：{e}"))?;
+            let rgba = rd.to_rgba8().map_err(|e| format!("图片解码失败：{e}"))?;
+            let (w, h) = (rgba.width(), rgba.height());
+            let raw = rgba.into_raw();
+            image::DynamicImage::ImageRgba8(
+                image::RgbaImage::from_raw(w, h, raw).ok_or("图片尺寸无效")?,
+            )
+        }
+    };
     let thumb = img.thumbnail(160, 160);
     let mut buf = std::io::Cursor::new(Vec::new());
     thumb
@@ -825,7 +853,7 @@ pub fn clip_img_full(app: AppHandle, id: u64) -> Result<String, String> {
             .map_err(|e| e.to_string())?;
     } else {
         use image::ImageEncoder;
-        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 85);
+        let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 85);
         enc.write_image(big.as_bytes(), big.width(), big.height(), big.color().into())
             .map_err(|e| e.to_string())?;
     }
