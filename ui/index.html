@@ -208,6 +208,8 @@ input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-
 .notice b{font-weight:700}
 
 /* 附近设备 */
+.ico.spin{animation:icoSpin 1.1s linear infinite}
+@keyframes icoSpin{to{transform:rotate(360deg)}}
 .dev{display:flex;align-items:center;gap:11px;padding:11px 4px;cursor:pointer;
   border-bottom:1px solid var(--lt);box-shadow:0 1px 0 rgba(192,199,210,.5)}
 .dev:last-child{border-bottom:0;box-shadow:none}
@@ -499,12 +501,11 @@ button:disabled{opacity:.45;box-shadow:none}
             </div>
             <div class="xcard">
               <div class="dev-head">
-              <h3 style="display:flex;align-items:center;gap:8px"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5 5l3.5 3.5"/></svg>附近设备
+              <h3 style="display:flex;align-items:center;gap:8px"><svg class="ico radar" id="radarIco" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5 5l3.5 3.5"/></svg>附近设备
                 <span class="chint" style="margin:0 0 0 auto;display:flex;gap:4px">
                   <button class="tbtn" id="btnMulti" onclick="toggleMulti()" title="多选设备" style="width:30px;height:30px"><svg class="ico" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12l2 2 4-4"/></svg></button>
-                  <button class="tbtn" style="width:30px;height:30px" onclick="netRefresh()" title="刷新附近设备"><svg class="ico" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></svg></button>
-                  <button class="tbtn" style="width:30px;height:30px" onclick="toast('收藏列表待实施')"><svg class="ico" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/></svg></button>
-                  <button class="tbtn" style="width:30px;height:30px" onclick="openModeModal()"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button>
+                  <button class="tbtn" style="width:30px;height:30px" onclick="doRefresh()" title="刷新附近设备"><svg class="ico" id="refreshIco" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></svg></button>
+                  <button class="tbtn" style="width:30px;height:30px" onclick="openModeModal()" title="发送模式"><svg class="ico" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.7l6.8-3.4M8.6 13.3l6.8 3.4"/></svg></button>
                 </span>
               </h3>
               <div class="chint" id="modeTxt">发送模式：<b style="color:var(--acc)">一个接收者</b> · 发送后自动取消选择</div>
@@ -706,8 +707,24 @@ function switchPage(p){
   document.querySelectorAll('#win-main .t-tab').forEach((t,i)=>t.classList.toggle('on', (p==='quick'&&i===0)||(p==='file'&&i===1)));
   document.getElementById('pg-quick').classList.toggle('on', p==='quick');
   document.getElementById('pg-file').classList.toggle('on', p==='file');
-  if(p==='file'){ document.getElementById('wPin').classList.add('on'); showPinBadge(true); }
+  if(p==='file'){ document.getElementById('wPin').classList.add('on'); showPinBadge(true); probeDevices(); }
   else if(!editMode){ document.getElementById('wPin').classList.remove('on'); showPinBadge(false); }
+}
+/* 探查设备：进入发送页自动触发一次组播发现；雷达图标旋转表示进行中 */
+function probeDevices(){
+  const r=document.getElementById('radarIco'); if(r) r.classList.add('spin');
+  const done=()=>{ const r2=document.getElementById('radarIco'); if(r2) r2.classList.remove('spin'); };
+  if(typeof netRefresh==='function'){
+    const ret=netRefresh();
+    if(ret && typeof ret.finally==='function'){ ret.finally(()=>setTimeout(done,400)); return; }
+  }
+  setTimeout(done,1200);
+}
+/* 手动刷新：图标短暂旋转后触发探查 */
+function doRefresh(){
+  const ri=document.getElementById('refreshIco'); if(ri) ri.classList.add('spin');
+  probeDevices();
+  setTimeout(()=>{ const ri2=document.getElementById('refreshIco'); if(ri2) ri2.classList.remove('spin'); }, 1300);
 }
 function togglePin(){
   const b=document.getElementById('wPin').classList.toggle('on');
