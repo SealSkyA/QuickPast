@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{App, AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, Size, WindowEvent};
+use tauri::{App, AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, RunEvent, Size, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -22,6 +22,8 @@ const GEOM_DEBOUNCE_MS: u64 = 900;
 
 struct AppState {
     geom_saved_at: Mutex<Instant>,
+    /// 退出/销毁中：屏蔽后续几何保存（退出过程的事件会把位置/尺寸写坏，导致下次启动偏移）
+    exiting: Mutex<bool>,
     /// 用户从历史列表点击复制的内容指纹：watcher 检测到相同内容时
     /// 不新增、不移动、不去重（保持列表与序号不变），只保留"上次复制"标记
     last_copied: Mutex<Option<history::ClipKey>>,
@@ -34,6 +36,7 @@ impl Default for AppState {
         AppState {
             // 初始为“很久以前”，保证启动后的首次窗口事件立即触发保存
             geom_saved_at: Mutex::new(Instant::now() - Duration::from_secs(3600)),
+            exiting: Mutex::new(false),
             last_copied: Mutex::new(None),
             viewer_id: Mutex::new(None),
         }
@@ -78,7 +81,7 @@ struct GeomValue {
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // 单实例：已运行时再次启动（双击图标/快捷方式）→ 呼出主窗口，不重复开进程
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(w) = app.get_webview_window(MAIN_LABEL) {
@@ -203,6 +206,11 @@ pub fn run() {
             WindowEvent::Moved(_) | WindowEvent::Resized(_) if window.label() == MAIN_LABEL => {
                 schedule_geom_save(window.app_handle().clone());
             }
+            // 窗口销毁：此后所有几何保存一律跳过（退出销毁过程中读到的位置/尺寸不可靠）
+            WindowEvent::Destroyed if window.label() == MAIN_LABEL => {
+                let state = window.app_handle().state::<AppState>();
+                *state.exiting.lock().unwrap() = true;
+            }
             // ×/系统关闭请求：不退出应用，隐藏到系统托盘（进程常驻）
             WindowEvent::CloseRequested { api, .. } if window.label() == MAIN_LABEL => {
                 api.prevent_close();
@@ -210,9 +218,19 @@ pub fn run() {
                 let _ = window.hide();
             }
             _ => {}
-        })
-        .run(tauri::generate_context!())
-        .expect("QuickPaste 启动失败");
+        });
+    let app = builder.build(tauri::generate_context!()).expect("QuickPaste 启动失败");
+    app.run(|handle, event| {
+        // 真正退出前：保存一次干净几何（窗口此刻仍是用户布局），并屏蔽退出过程的后续保存
+        if let RunEvent::ExitRequested { .. } = event {
+            let state = handle.state::<AppState>();
+            let mut ex = state.exiting.lock().unwrap();
+            if !*ex {
+                *ex = true;
+                save_geom_now(handle);
+            }
+        }
+    });
 }
 
 /* ────────────── 热键呼出（支持动态修改） ────────────── */
@@ -359,6 +377,9 @@ fn restore_geometry(app: &mut App) -> tauri::Result<()> {
 
 fn schedule_geom_save(app: AppHandle) {
     let state = app.state::<AppState>();
+    if *state.exiting.lock().unwrap() {
+        return;
+    }
     {
         let mut last = state.geom_saved_at.lock().unwrap();
         if last.elapsed() < Duration::from_millis(GEOM_DEBOUNCE_MS) {
@@ -366,16 +387,19 @@ fn schedule_geom_save(app: AppHandle) {
         }
         *last = Instant::now();
     }
+    save_geom_now(&app);
+}
+
+/// 立即保存主窗口几何：位置取 outer（与 set_position 同语义），尺寸取 inner（与 set_size 同语义）
+fn save_geom_now(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(MAIN_LABEL) {
         // 最小化/隐藏期间窗口几何不代表用户布局，不保存
         if w.is_minimized().unwrap_or(true) || !w.is_visible().unwrap_or(false) {
             return;
         }
-        // 位置取 outer（与 SetWindowPos/set_position 同语义，含 DWM 阴影外框，避免累积漂移）；
-        // 尺寸取 inner（set_size 按客户区解释，outer_size 含阴影会每次 +16px 累积增长）
         if let (Ok(pos), Ok(size)) = (w.outer_position(), w.inner_size()) {
             let v = serde_json::json!({ "x": pos.x, "y": pos.y, "w": size.width, "h": size.height });
-            let _ = settings::set_key(&app, GEOM_KEY, v);
+            let _ = settings::set_key(app, GEOM_KEY, v);
         }
     }
 }
