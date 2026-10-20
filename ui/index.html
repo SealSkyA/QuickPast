@@ -455,13 +455,15 @@ button:disabled{opacity:.45;box-shadow:none}
               <div class="rdwrap col">
                 <div class="rdar"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></div>
                 <div class="alias">我的别名 <small id="aliasTxt">DESKTOP-QP01</small></div>
-                <div class="auto-sw">
-                  <span class="as-lbl">自动保存</span>
-                  <label class="sw"><input type="checkbox" id="autoSave" onchange="autoSaveChange()"><i></i></label>
-                </div>
-                <div class="auto-sw">
-                  <span class="as-lbl">在线状态</span>
-                  <label class="sw"><input type="checkbox" id="netOnlineSw" onchange="netOnlineChange()"><i></i></label>
+                <div class="auto-sw" style="flex-direction:row;gap:24px">
+                  <div class="auto-sw">
+                    <span class="as-lbl">自动保存</span>
+                    <label class="sw"><input type="checkbox" id="autoSave" onchange="autoSaveChange()"><i></i></label>
+                  </div>
+                  <div class="auto-sw">
+                    <span class="as-lbl">在线状态</span>
+                    <label class="sw"><input type="checkbox" id="netOnlineSw" onchange="netOnlineChange()"><i></i></label>
+                  </div>
                 </div>
                 <div class="chint" style="margin:0">局域网内的设备可以向本机推送文件，接收后自动进入「文件」历史。</div>
               </div>
