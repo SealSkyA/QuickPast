@@ -369,6 +369,7 @@ pub struct RcvSession {
     pub state: String, // Pending|Accepted|Rejected|Finished|Canceled
     pub confirm: Arc<(Mutex<Option<bool>>, Condvar)>,
     pub accepted: Vec<String>, // 用户接受的 fileId
+    pub renames: HashMap<String, String>, // 重名顶层（文件/文件夹）→ 自动追加（N）后的新名
 }
 
 /// Web 分享会话（S4：链接下载）
@@ -533,6 +534,7 @@ fn handle_prepare_upload(app: AppHandle, mut req: tiny_http::Request) {
             path: None,
         });
     }
+    let renames = rename_map(&app, &rfiles);
     let session = RcvSession {
         session_id: session_id.clone(),
         sender_ip: sender_ip.clone(),
@@ -542,6 +544,7 @@ fn handle_prepare_upload(app: AppHandle, mut req: tiny_http::Request) {
         state: "Pending".into(),
         confirm: confirm.clone(),
         accepted: Vec::new(),
+        renames,
     };
     {
         let st = app.state::<NetState>();
@@ -729,7 +732,21 @@ fn handle_upload(app: AppHandle, mut req: tiny_http::Request, url: &str) {
     // 流式落盘 + sha256（显示名含相对路径时还原子目录结构）
     let dir = rcv_dir(&app);
     let _ = std::fs::create_dir_all(&dir);
-    let path = dir.join(safe_rel_path(&f.file_name));
+    let rel = safe_rel_path(&f.file_name);
+    // 会话级顶层重命名：目标已存在同名文件/文件夹时整体改为「名称（N）」（不覆盖）
+    let rel_str = rel.to_string_lossy().to_string();
+    let mapped = match s.renames.get(&top_level(&rel_str)) {
+        Some(r) => {
+            let rest = match rel_str.find(['/', '\\']) {
+                Some(i) => rel_str[i..].to_string(),
+                None => String::new(),
+            };
+            format!("{r}{rest}")
+        }
+        None => rel_str,
+    };
+    // 文件级兜底（并发会话等边界）：叶子仍冲突则自动追加（N）
+    let path = unique_path(&dir, &mapped);
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -1010,6 +1027,72 @@ fn parse_query(url: &str) -> HashMap<String, String> {
         }
     }
     m
+}
+
+/// 目标目录下顶层（文件/文件夹）存在同名时，生成 原顶层 → 新顶层 的映射：
+/// 新名为 名称（1）、名称（2）… 依次递增，绝不覆盖已有文件。
+fn rename_map(app: &AppHandle, files: &[RcvFile]) -> HashMap<String, String> {
+    let dir = rcv_dir(app);
+    let _ = std::fs::create_dir_all(&dir);
+    let mut seen: HashMap<String, String> = HashMap::new();
+    let mut renames: HashMap<String, String> = HashMap::new();
+    for f in files {
+        let top = top_level(&f.file_name);
+        if seen.contains_key(&top) {
+            continue;
+        }
+        if dir.join(&top).exists() {
+            let (stem, ext) = split_name(&top);
+            let mut new_top = None;
+            for i in 1..=999 {
+                let cand = format!("{stem}（{i}）{ext}");
+                if !dir.join(&cand).exists() {
+                    new_top = Some(cand);
+                    break;
+                }
+            }
+            let nt = new_top
+                .unwrap_or_else(|| format!("{stem}_{}{ext}", Uuid::new_v4().to_string().split_at(8).0));
+            seen.insert(top.clone(), nt.clone());
+            renames.insert(top, nt);
+        } else {
+            seen.insert(top.clone(), top.clone());
+        }
+    }
+    renames
+}
+
+/// 取显示名的顶层段（目录展开时首段为文件夹名；单文件即文件名本身）
+fn top_level(name: &str) -> String {
+    name.split(['/', '\\']).next().unwrap_or(name).to_string()
+}
+
+/// 拆分文件名：返回 (主名, 扩展名含点)；无扩展名时扩展名为空
+fn split_name(name: &str) -> (String, String) {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() && !ext.contains(['/', '\\']) => {
+            (stem.to_string(), format!(".{ext}"))
+        }
+        _ => (name.to_string(), String::new()),
+    }
+}
+
+/// 相对路径目标已存在时，叶子文件名自动追加全角括号序号（不覆盖）：
+/// name（1）.txt、name（2）.txt …
+fn unique_path(dir: &std::path::Path, rel: &str) -> std::path::PathBuf {
+    let p = dir.join(rel);
+    if !p.exists() {
+        return p;
+    }
+    let leaf = rel.split(['/', '\\']).next_back().unwrap_or(rel);
+    let (stem, ext) = split_name(leaf);
+    for i in 1..=999 {
+        let cand = format!("{stem}（{i}）{ext}");
+        if !dir.join(&cand).exists() {
+            return dir.join(&cand);
+        }
+    }
+    dir.join(format!("{stem}_{}{ext}", Uuid::new_v4().to_string().split_at(8).0))
 }
 
 /// 将显示名（可含相对路径，来自目录展开）安全转为落盘相对路径：
