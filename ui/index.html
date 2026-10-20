@@ -1367,17 +1367,29 @@ function showXp(cur,total,label){
 function hideXp(){ document.getElementById('xprog').style.display='none'; }
 /* 拖拽文件到窗口 → 预选发送 */
 document.addEventListener('dragover', e=>e.preventDefault());
+function handleDroppedPaths(paths){
+  if(!paths || !paths.length) return 0;
+  let n = 0;
+  paths.forEach(p=>{
+    if(!p) return;
+    const name = p.split(/[\\/]/).pop() || '文件';
+    if(!SEL.some(s=>s.path===p)){ SEL.push({type:'file', path:p, name:name, size:''}); n++; }
+  });
+  if(!n) return 0;
+  renderSel(); switchPage('file');
+  if(typeof toast === 'function') toast('已添加 '+n+' 个文件，选择目标设备后发送');
+  return n;
+}
 document.addEventListener('drop', e=>{
   e.preventDefault();
+  // 浏览器环境兜底（WebView2 下从桌面拖入的文件不在此通道，走 tauri://drag-drop）
   const files = e.dataTransfer ? [...e.dataTransfer.files] : [];
-  if(!files.length) return;
-  let n = 0;
-  files.forEach(f=>{
-    if(f.path && !SEL.some(s=>s.path===f.path)){ SEL.push({type:'file', path:f.path, name:f.name, size:fmtSize(f.size||0)}); n++; }
-  });
-  if(!n) return;
-  renderSel(); switchPage('file');
-  toast('已添加 '+n+' 个文件，选择目标设备后发送');
+  if(files.length) handleDroppedPaths(files.map(f=>f.path).filter(Boolean));
+});
+// Tauri 原生拖放：从桌面/资源管理器拖入文件时由 WebView 派发该事件（paths 为文件绝对路径）
+window.addEventListener('tauri://drag-drop', e=>{
+  const p = e && (e.payload || e.detail);
+  if(p && p.paths) handleDroppedPaths(p.paths);
 });
 function selIcon(t){
   if(t==='folder') return '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>';

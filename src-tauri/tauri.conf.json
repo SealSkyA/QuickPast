@@ -12,13 +12,14 @@
       {
         "label": "main",
         "title": "QuickPaste",
-        "url": "index.html?v=21",
+        "url": "index.html?v=22",
         "width": 860,
         "height": 600,
         "minWidth": 600,
         "minHeight": 400,
         "resizable": true,
         "decorations": false,
+        "dragDropEnabled": true,
         "center": true,
         "visible": false
       },
