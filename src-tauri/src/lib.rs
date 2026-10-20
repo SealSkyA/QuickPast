@@ -344,8 +344,9 @@ fn restore_geometry(app: &mut App) -> tauri::Result<()> {
     match geo.and_then(|v| serde_json::from_value::<GeomValue>(v).ok()) {
         // 最小化/隐藏期间可能存到异常几何（-32000 偏移、极小尺寸），视为无效 → 居中
         Some(g) if g.w >= 200 && g.h >= 200 && g.x > -20000 && g.y > -20000 => {
-            let _ = w.set_position(Position::Physical(PhysicalPosition::new(g.x, g.y)));
+            // 先定尺寸再定位置：避免设置尺寸时 Windows 调整窗口原点造成漂移
             let _ = w.set_size(Size::Physical(PhysicalSize::new(g.w, g.h)));
+            let _ = w.set_position(Position::Physical(PhysicalPosition::new(g.x, g.y)));
         }
         _ => {
             let _ = w.center();
@@ -370,7 +371,9 @@ fn schedule_geom_save(app: AppHandle) {
         if w.is_minimized().unwrap_or(true) || !w.is_visible().unwrap_or(false) {
             return;
         }
-        if let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) {
+        // 位置取 outer（与 SetWindowPos/set_position 同语义，含 DWM 阴影外框，避免累积漂移）；
+        // 尺寸取 inner（set_size 按客户区解释，outer_size 含阴影会每次 +16px 累积增长）
+        if let (Ok(pos), Ok(size)) = (w.outer_position(), w.inner_size()) {
             let v = serde_json::json!({ "x": pos.x, "y": pos.y, "w": size.width, "h": size.height });
             let _ = settings::set_key(&app, GEOM_KEY, v);
         }
