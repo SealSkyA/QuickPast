@@ -1303,7 +1303,17 @@ pub fn net_send(
     paths: Vec<String>,
     names: Option<Vec<String>>,
 ) -> Result<(), String> {
-    send_files(Some(&app), &device, &paths, names.as_deref())
+    // 后台线程执行实际发送：对端确认（最长 60s）、大文件夹展开、大文件上传都会长时间阻塞，
+    // 同步执行会占住窗口消息线程导致"未响应"。命令立即返回，进度/结果通过事件上报。
+    std::thread::spawn(move || {
+        if let Err(e) = send_files(Some(&app), &device, &paths, names.as_deref()) {
+            let _ = app.emit(
+                "qp:send_error",
+                serde_json::json!({"device": device.alias, "error": e}),
+            );
+        }
+    });
+    Ok(())
 }
 
 /// 发送纯文本到指定设备：采用 LocalSend v2 文本消息（fileType=text），
@@ -1313,6 +1323,20 @@ pub fn net_send_text(app: AppHandle, device: Device, text: String) -> Result<(),
     if text.is_empty() {
         return Err("文本为空".into());
     }
+    // 与 net_send 同理：prepare-upload 可能等待对端确认，同步执行会卡住窗口
+    std::thread::spawn(move || {
+        if let Err(e) = send_text_files(Some(&app), &device, &text) {
+            let _ = app.emit(
+                "qp:send_error",
+                serde_json::json!({"device": device.alias, "error": e}),
+            );
+        }
+    });
+    Ok(())
+}
+
+/// 文本发送核心（app 传 None 时跳过事件推送，供集成测试调用）
+fn send_text_files(app: Option<&AppHandle>, device: &Device, text: &str) -> Result<(), String> {
     let mut files_map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
     let file_id = Uuid::new_v4().to_string();
     files_map.insert(
@@ -1325,7 +1349,7 @@ pub fn net_send_text(app: AppHandle, device: Device, text: String) -> Result<(),
         }),
     );
     let base = format!("http://{}:{}/api/localsend/v2", device.ip, device.port);
-    let req_body = serde_json::json!({ "info": my_info(Some(&app)), "files": files_map });
+    let req_body = serde_json::json!({ "info": my_info(app), "files": files_map });
 
     // prepare-upload
     let resp = ureq::post(&format!("{base}/prepare-upload"))
@@ -1353,7 +1377,7 @@ pub fn net_send_text(app: AppHandle, device: Device, text: String) -> Result<(),
     let url = format!("{base}/upload?sessionId={session_id}&fileId={file_id}&token={token}");
     let r = ureq::post(&url)
         .timeout(Duration::from_secs(60))
-        .send_string(&text)
+        .send_string(text)
         .map_err(|e| match e {
             ureq::Error::Status(code, r) => {
                 format!("发送失败（HTTP {code}: {})", r.into_string().unwrap_or_default())
@@ -1361,7 +1385,9 @@ pub fn net_send_text(app: AppHandle, device: Device, text: String) -> Result<(),
             ureq::Error::Transport(t) => format!("发送失败：{t}"),
         })?;
     drop(r);
-    let _ = app.emit("qp:send_done", serde_json::json!({"device": device.alias}));
+    if let Some(a) = app {
+        let _ = a.emit("qp:send_done", serde_json::json!({"device": device.alias}));
+    }
     Ok(())
 }
 

@@ -1312,7 +1312,8 @@ function selDev(i){
   }else{
     if(!SEL.length) return toast('请先点击上方类型图标选择要发送的内容', true);
     d.sel=true; renderDevs();
-    doSendTo(d).then(ok=>{ d.sel=false; renderDevs(); if(ok){ SEL=[]; renderSel(); } });
+    // 清空列表由 qp:send_done 事件处理（发送在后台线程，完成时自动取消选择）
+    doSendTo(d).then(()=>{ d.sel=false; renderDevs(); });
   }
 }
 function pickType(el,name){
@@ -1390,23 +1391,26 @@ function fmtSize(n){
 }
 async function doSendTo(d){
   if(!SEL.length) return false;
+  // 新一批发送开始时重置失败标记（仅本批首个触发时）
+  if(!window.__pendingSend) window.__pendingSendOk = true;
   if(SEL.some(s=>s.type==='text')){
     if(SEL.length!==1){ toast('文本只能单独发送，请先清空选择', true); return false; }
+    window.__pendingSend=(window.__pendingSend||0)+1;
     showXp(1,1,'文本');
     try{
+      // 后端命令已改为后台线程执行、立即返回；进度/完成走 qp:send_* 事件
       await qpInvoke('net_send_text',{device:d.raw, text:SEL[0].content});
-      toast('已发送文本 → '+d.name);
-    }catch(e){ toast('发送失败：'+e, true); hideXp(); return false; }
+    }catch(e){ window.__pendingSend=Math.max(0,(window.__pendingSend||0)-1); toast('发送失败：'+e, true); hideXp(); return false; }
   }else{
     const paths=SEL.map(s=>s.path).filter(Boolean);
     if(!paths.length){ toast('无法获取所选文件的路径，请重新选择', true); return false; }
     // names：与 paths 对应的显示名（拖放临时文件的原始名，避免对方收到带时间戳前缀的临时文件名）
     const names = SEL.map(s=>s.name);
+    window.__pendingSend=(window.__pendingSend||0)+1;
     showXp(1,paths.length,'发送中');
     try{
       await qpInvoke('net_send',{device:d.raw, paths, names});
-      toast('已发送 '+paths.length+' 个文件 → '+d.name);
-    }catch(e){ toast('发送失败：'+e, true); hideXp(); return false; }
+    }catch(e){ window.__pendingSend=Math.max(0,(window.__pendingSend||0)-1); toast('发送失败：'+e, true); hideXp(); return false; }
   }
   return true;
 }
@@ -1487,10 +1491,8 @@ function doSend(){
   const targets=DEVS.filter(d=>d.sel);
   if(!targets.length) return toast('请选择接收设备（单选：直接点击设备）', true);
   (async()=>{
-    let allOk=true;
-    for(const t of targets){ if(!(await doSendTo(t))){ allOk=false; break; } }
-    // 全部发送成功 → 清空待发送列表（部分失败时保留，便于重试）
-    if(allOk){ SEL=[]; renderSel(); }
+    for(const t of targets){ if(!(await doSendTo(t))) break; }
+    // 全部成功后的清空由 qp:send_done 事件统一处理（每台设备完成一个事件，pending 归零时清空）
   })();
 }
 function copyLink(){
@@ -1866,6 +1868,7 @@ renderList(); renderDevs(); loadFav();
     window.__incBusy = false;
     showNextIncoming();
   });
+  window.__pendingSend = 0; window.__pendingSendOk = true;
   listen('qp:send_progress', e => {
     const p = e && e.payload; if (!p || typeof showXp !== 'function') return;
     showXp(p.index, p.total, '发送中');
@@ -1873,7 +1876,19 @@ renderList(); renderDevs(); loadFav();
   listen('qp:send_done', e => {
     if (typeof hideXp === 'function') hideXp();
     const p = e && e.payload;
+    window.__pendingSend = Math.max(0, (window.__pendingSend||0) - 1);
+    // 本批全部发送完成且无失败 → 自动清空待发送列表（失败保留便于重试）
+    if (window.__pendingSend === 0 && window.__pendingSendOk){
+      SEL=[]; renderSel();
+    }
     if (typeof toast === 'function') toast('发送完成 → ' + (p && p.device ? p.device : '对端'));
+  });
+  listen('qp:send_error', e => {
+    if (typeof hideXp === 'function') hideXp();
+    const p = e && e.payload;
+    window.__pendingSend = Math.max(0, (window.__pendingSend||0) - 1);
+    window.__pendingSendOk = false;
+    if (typeof toast === 'function') toast('发送失败：' + (p && p.error ? p.error : '未知错误'), true);
   });
 
   /* —— 设置页：保存（别名 / 呼出快捷键 / 自动保存） —— */
