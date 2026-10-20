@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -726,10 +726,13 @@ fn handle_upload(app: AppHandle, mut req: tiny_http::Request, url: &str) {
         return;
     }
 
-    // 流式落盘 + sha256
+    // 流式落盘 + sha256（显示名含相对路径时还原子目录结构）
     let dir = rcv_dir(&app);
     let _ = std::fs::create_dir_all(&dir);
-    let path = dir.join(safe_name(&f.file_name));
+    let path = dir.join(safe_rel_path(&f.file_name));
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let mut file = match std::fs::File::create(&path) {
         Ok(f) => f,
         Err(_) => {
@@ -1009,25 +1012,87 @@ fn parse_query(url: &str) -> HashMap<String, String> {
     m
 }
 
-fn safe_name(s: &str) -> String {
-    let mut out = String::new();
-    for c in s.chars() {
-        out.push(if c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|' {
-            '_'
-        } else {
-            c
-        });
+/// 将显示名（可含相对路径，来自目录展开）安全转为落盘相对路径：
+/// 保留子目录层级，过滤非法字符与"."/".."，防路径穿越。
+fn safe_rel_path(name: &str) -> PathBuf {
+    let mut clean = PathBuf::new();
+    for seg in name.split(['/', '\\']) {
+        let mut part = String::new();
+        for c in seg.chars() {
+            part.push(if matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '_'
+            } else {
+                c
+            });
+        }
+        if !part.is_empty() && part != "." && part != ".." {
+            clean.push(part);
+        }
     }
-    if out.is_empty() {
-        "unnamed".into()
-    } else {
-        out
+    if clean.as_os_str().is_empty() {
+        clean.push("unnamed");
     }
+    clean
 }
 
 /* ────────────── 发送客户端（S3 UI 复用） ────────────── */
 
-/// 向对端设备发送一批文件（path 为本地文件路径）。
+/// 把一批路径展开为「真实路径 + 显示名」列表：文件直接进入；
+/// 目录递归展开，显示名为「目录名/相对路径」（接收端据此还原目录结构）。
+fn expand_send_paths(
+    paths: &[String],
+    names: Option<&[String]>,
+) -> Result<Vec<(PathBuf, String)>, String> {
+    let mut out: Vec<(PathBuf, String)> = Vec::new();
+    for (i, p) in paths.iter().enumerate() {
+        let pb = PathBuf::from(p);
+        let meta = std::fs::metadata(&pb).map_err(|e| format!("读取失败 {p}: {e}"))?;
+        if meta.is_file() {
+            let name = names
+                .and_then(|ns| ns.get(i))
+                .filter(|s| !s.is_empty())
+                .cloned()
+                .unwrap_or_else(|| {
+                    pb.file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default()
+                });
+            out.push((pb, name));
+        } else if meta.is_dir() {
+            let dir_name = pb
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "folder".into());
+            collect_dir_entries(&pb, &dir_name, &mut out)?;
+        } else {
+            return Err(format!("不是文件：{p}"));
+        }
+    }
+    Ok(out)
+}
+
+/// 递归收集目录内文件；显示名 = 相对路径（目录分隔符统一用 /，接收端还原结构）
+fn collect_dir_entries(dir: &Path, rel: &str, out: &mut Vec<(PathBuf, String)>) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("读取目录失败 {dir:?}: {e}"))?;
+    for en in entries {
+        let en = en.map_err(|e| format!("读取目录项失败：{e}"))?;
+        let name = en.file_name().to_string_lossy().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let path = en.path();
+        let ft = en.file_type().map_err(|e| format!("读取目录项失败：{e}"))?;
+        let rel_path = if rel.is_empty() { name } else { format!("{rel}/{name}") };
+        if ft.is_dir() {
+            collect_dir_entries(&path, &rel_path, out)?;
+        } else if ft.is_file() {
+            out.push((path, rel_path));
+        }
+    }
+    Ok(())
+}
+
+/// 向对端设备发送一批文件（path 为本地文件或目录路径，目录会递归展开并保留目录结构）。
 /// app 传 None 时跳过事件推送（供集成测试调用）。
 /// names：与 paths 对应的显示名（可选；拖放临时文件路径带时间戳前缀，用显示名覆盖文件名）
 pub fn send_files(
@@ -1039,26 +1104,16 @@ pub fn send_files(
     if paths.is_empty() {
         return Err("没有要发送的文件".into());
     }
+    let items = expand_send_paths(paths, names)?;
+    if items.is_empty() {
+        return Err("所选内容里没有可发送的文件".into());
+    }
     let mut files_map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
     let mut ids: Vec<String> = Vec::new();
-    for (i, p) in paths.iter().enumerate() {
-        let pb = PathBuf::from(p);
-        let meta = std::fs::metadata(&pb).map_err(|e| format!("读取文件失败 {p}: {e}"))?;
-        if !meta.is_file() {
-            return Err(format!("不是文件：{p}"));
-        }
+    for (path, name) in &items {
+        let meta = std::fs::metadata(path).map_err(|e| format!("读取文件失败 {path:?}: {e}"))?;
         let file_id = Uuid::new_v4().to_string();
-        // 显示名优先取 names[i]（拖放临时文件时用原始文件名），否则取路径文件名
-        let name = names
-            .and_then(|ns| ns.get(i))
-            .filter(|s| !s.is_empty())
-            .cloned()
-            .unwrap_or_else(|| {
-                pb.file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            });
-        let mime = mime_of(&name);
+        let mime = mime_of(name);
         files_map.insert(
             file_id.clone(),
             serde_json::json!({
@@ -1097,7 +1152,7 @@ pub fn send_files(
     // 逐文件上传（裸字节流）
     for (i, id) in ids.iter().enumerate() {
         let token = tokens.get(id).ok_or("对端未接受该文件")?.clone();
-        let bytes = std::fs::read(&paths[i]).map_err(|e| format!("读取文件失败：{e}"))?;
+        let bytes = std::fs::read(&items[i].0).map_err(|e| format!("读取文件失败：{e}"))?;
         let url = format!("{base}/upload?sessionId={session_id}&fileId={id}&token={token}");
         let r = ureq::post(&url)
             .timeout(Duration::from_secs(120))
@@ -1112,7 +1167,7 @@ pub fn send_files(
         if let Some(a) = app {
             let _ = a.emit(
                 "qp:send_progress",
-                serde_json::json!({"index": i + 1, "total": paths.len(), "file": &paths[i]}),
+                serde_json::json!({"index": i + 1, "total": items.len(), "file": &items[i].1}),
             );
         }
     }
@@ -1319,21 +1374,13 @@ pub fn net_share(app: AppHandle, paths: Vec<String>) -> Result<String, String> {
     let sid = Uuid::new_v4().to_string();
     let pin = format!("{:04}", now_ms() % 10000);
     let mut files = Vec::new();
-    for p in &paths {
-        let pb = PathBuf::from(p);
-        let meta = std::fs::metadata(&pb).map_err(|e| format!("读取文件失败 {p}: {e}"))?;
-        if !meta.is_file() {
-            return Err(format!("不是文件：{p}"));
-        }
-        let name = pb
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
+    for (path, name) in expand_send_paths(&paths, None)? {
+        let meta = std::fs::metadata(&path).map_err(|e| format!("读取文件失败 {path:?}: {e}"))?;
         files.push(ShareFile {
             file_id: Uuid::new_v4().to_string(),
             file_name: name,
             size: meta.len(),
-            path: p.clone(),
+            path: path.to_string_lossy().to_string(),
         });
     }
     let sess = ShareSession {

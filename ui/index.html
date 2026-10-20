@@ -1417,8 +1417,7 @@ function showXp(cur,total,label){
   document.getElementById('xpTxt').textContent=label+' '+cur+'/'+total;
 }
 function hideXp(){ document.getElementById('xprog').style.display='none'; }
-/* 拖拽文件到窗口 → 预选发送 */
-document.addEventListener('dragover', e=>e.preventDefault());
+/* 拖拽到窗口 → 预选发送（Tauri 原生拖放：拿到真实路径，文件/文件夹均可） */
 function handleDroppedPaths(paths){
   if(!paths || !paths.length) return 0;
   let n = 0;
@@ -1429,57 +1428,21 @@ function handleDroppedPaths(paths){
   });
   if(!n) return 0;
   renderSel(); switchPage('file');
-  if(typeof toast === 'function') toast('已添加 '+n+' 个文件，选择目标设备后发送');
+  if(typeof toast === 'function') toast('已添加 '+n+' 个文件/文件夹，选择目标设备后发送');
   return n;
 }
-// WebView2 下 Tauri 原生拖放 handler 未生效（本环境实测 tauri://drag-drop 不派发），
-// 故禁用该 handler 让 HTML5 拖放接管；但 HTML5 的 File 对象没有磁盘路径（File.path 未注入），
-// 因此读取文件内容经 IPC 写入临时文件换取磁盘路径。
-const DRAG_TMP_MAX = 60 * 1024 * 1024; // 超过 60MB 提示用「文件」按钮（走原生对话框，不占内存）
-document.addEventListener('drop', e=>{
-  e.preventDefault();
-  const dt = e.dataTransfer;
-  if(!dt) return;
-  const files = [...dt.files];
-  if(!files.length){
-    // 目录拖放：HTML5 的 files 不含目录项 → 提示走「文件夹」按钮
-    if(typeof toast === 'function') toast('文件夹请用发送页的「文件夹」按钮选择', true);
-    return;
-  }
-  // 若环境注入了 path（其它平台/版本），优先直接用
-  const withPath = files.map(f=>f.path).filter(Boolean);
-  if(withPath.length === files.length){ handleDroppedPaths(withPath); return; }
-  // 无 path → 读内容 → Rust 写临时文件
-  const big = files.find(f=>f.size > DRAG_TMP_MAX);
-  if(big){
-    if(typeof toast === 'function') toast('拖放文件过大，请用发送页的「文件」按钮选择后发送', true);
-    return;
-  }
-  Promise.all(files.map(f =>
-    f.arrayBuffer().then(buf => ({ name: f.name, data: Array.from(new Uint8Array(buf)) }))
-  ))
-  .then(arr => qpInvoke('qp_save_drag_files', { files: arr }))
-  .then(paths => {
-    const list = Array.isArray(paths)? paths : [paths];
-    let n = 0;
-    list.forEach((p, i) => {
-      if(!p) return;
-      const f = files[i] || {};
-      // 临时文件路径带时间戳前缀，显示名用原始文件名（发送内容不受影响）
-      const nm = f.name || p.split(/[\\/]/).pop() || '文件';
-      if(!SEL.some(s=>s.path===p)){ SEL.push({type:'file', path:p, name:nm, size: fmtSize(f.size||0)}); n++; }
-    });
-    if(!n) return;
-    renderSel(); switchPage('file');
-    if(typeof toast === 'function') toast('已添加 '+n+' 个文件，选择目标设备后发送');
-  })
-  .catch(err => { if(typeof toast === 'function') toast('处理拖放文件失败：'+err, true); });
-});
-// Tauri 原生拖放（部分平台/配置可用；本环境未生效，保留兼容）
-window.addEventListener('tauri://drag-drop', e=>{
-  const p = e && (e.payload || e.detail);
-  if(p && p.paths) handleDroppedPaths(p.paths);
-});
+// 原生拖放：dragDropEnabled=true 后 Tauri 内部向页面 emit 'tauri://drag-drop'
+// （payload.paths 为真实路径数组，文件/文件夹均可；DOM 事件与 tauri 事件双绑定兜底）
+(function bindDrag(){
+  const grab = e => {
+    const p = (e && (e.payload || e.detail)) || {};
+    if(Array.isArray(p.paths)) handleDroppedPaths(p.paths);
+  };
+  window.addEventListener('tauri://drag-drop', grab);
+  if(window.__TAURI__ && window.__TAURI__.event){
+    window.__TAURI__.event.listen('tauri://drag-drop', grab).catch(()=>{});
+  } else { setTimeout(bindDrag, 100); }
+})();
 function selIcon(t){
   if(t==='folder') return '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>';
   if(t==='text') return '<path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4z"/><path d="M9 7h6M9 10.5h4"/>';
