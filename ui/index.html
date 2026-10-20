@@ -505,6 +505,7 @@ button:disabled{opacity:.45;box-shadow:none}
                 <span class="chint" style="margin:0 0 0 auto;display:flex;gap:4px">
                   <button class="tbtn" id="btnMulti" onclick="toggleMulti()" title="多选设备" style="width:30px;height:30px"><svg class="ico" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12l2 2 4-4"/></svg></button>
                   <button class="tbtn" style="width:30px;height:30px" onclick="doRefresh()" title="刷新附近设备"><svg class="ico" id="refreshIco" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></svg></button>
+                  <button class="tbtn" id="btnFav" style="width:30px;height:30px" onclick="toggleFavOnly()" title="只看收藏设备"><svg class="ico" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/></svg></button>
                   <button class="tbtn" style="width:30px;height:30px" onclick="openModeModal()" title="发送模式"><svg class="ico" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.7l6.8-3.4M8.6 13.3l6.8 3.4"/></svg></button>
                 </span>
               </h3>
@@ -1249,11 +1250,15 @@ function demoRecv(){
   toast('已接收：季度报表.xlsx → 桌面');
 }
 function renderDevs(){
+  // 从收藏集合标记每台设备（离线设备也要标，方便"只看收藏"时看到离线状态）
+  DEVS.forEach(d=>{ d.fav = favSet.has(d.fp); });
   const q = (document.getElementById('devSearch').value||'').trim().toLowerCase();
   const box=document.getElementById('devlist');
-  const arr = DEVS.map((d,i)=>({d,i})).filter(x => !q || (x.d.name+' '+x.d.os).toLowerCase().includes(q));
+  const arr = DEVS.map((d,i)=>({d,i}))
+    .filter(x => !favOnly || x.d.fav)
+    .filter(x => !q || (x.d.name+' '+x.d.os).toLowerCase().includes(q));
   if(!arr.length){
-    box.innerHTML='<div class="list-empty">'+(DEVS.length?'没有匹配的设备':'未发现附近设备 — 确保接收端已运行 QuickPaste')+'</div>';
+    box.innerHTML='<div class="list-empty">'+(DEVS.length ? (favOnly ? '暂无收藏设备 — 点设备行右侧 ☆ 收藏' : '没有匹配的设备') : '未发现附近设备 — 确保接收端已运行 QuickPaste')+'</div>';
     return;
   }
   box.innerHTML = arr.map(({d,i})=>(
@@ -1265,7 +1270,29 @@ function renderDevs(){
     +'</div>'
   )).join('');
 }
-function dstar(i){ DEVS[i].fav=!DEVS[i].fav; renderDevs(); }
+function dstar(i){
+  const d=DEVS[i];
+  if(favSet.has(d.fp)) favSet.delete(d.fp); else favSet.add(d.fp);
+  d.fav = favSet.has(d.fp);
+  saveFav(); renderDevs();
+}
+/* 设备收藏：持久化到设置 net.favDevices；顶部星标切换"只看收藏"过滤 */
+let favSet = new Set(), favOnly = false;
+function loadFav(){
+  if(!QP) return;
+  QP.invoke('get_setting',{key:'net.favDevices'}).then(v=>{
+    if(Array.isArray(v)){ favSet = new Set(v.map(x=>String(x))); renderDevs(); }
+  }).catch(()=>{});
+}
+function saveFav(){
+  if(QP) QP.invoke('set_setting',{key:'net.favDevices', value:[...favSet]}).catch(()=>{});
+}
+function toggleFavOnly(){
+  favOnly = !favOnly;
+  const b = document.getElementById('btnFav'); if(b) b.classList.toggle('active', favOnly);
+  renderDevs();
+  if(favOnly && !favSet.size) toast('暂无收藏设备 — 点设备行右侧 ☆ 收藏', true);
+}
 function toggleMulti(){
   multi=!multi;
   document.getElementById('btnMulti').classList.toggle('active',multi);
@@ -1522,7 +1549,7 @@ function toast(msg, err){
 }
 document.getElementById('mask').onclick=closeAllPopup;
 /* 初始化 */
-renderList(); renderDevs();
+renderList(); renderDevs(); loadFav();
 /* 历史载入兜底：Tauri 注入与后端 setup 均存在时序竞态，就绪后载入历史 + 注册剪贴板监听（与适配层去重） */
 (function initHistory(){
   if(!(window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.event)){
