@@ -22,3 +22,6 @@ token-tracker/data/
 # 本地打包产物
 QuickPaste_v*.exe
 
+
+# tauri-cli 鍓嶇鎵撳寘宸ュ叿
+node_modules/
