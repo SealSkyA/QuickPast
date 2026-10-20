@@ -1149,14 +1149,14 @@ pub fn send_files(
     let tokens: HashMap<String, String> = serde_json::from_value(v["files"].clone())
         .map_err(|_| "对端未返回文件令牌".to_string())?;
 
-    // 逐文件上传（裸字节流）
+    // 逐文件上传（流式发送，大文件不整体读入内存）
     for (i, id) in ids.iter().enumerate() {
         let token = tokens.get(id).ok_or("对端未接受该文件")?.clone();
-        let bytes = std::fs::read(&items[i].0).map_err(|e| format!("读取文件失败：{e}"))?;
+        let mut f = std::fs::File::open(&items[i].0).map_err(|e| format!("打开文件失败：{e}"))?;
         let url = format!("{base}/upload?sessionId={session_id}&fileId={id}&token={token}");
         let r = ureq::post(&url)
-            .timeout(Duration::from_secs(120))
-            .send_bytes(&bytes)
+            .timeout(Duration::from_secs(300))
+            .send(&mut f)
             .map_err(|e| match e {
                 ureq::Error::Status(code, r) => {
                     format!("上传失败（HTTP {code}: {})", r.into_string().unwrap_or_default())
