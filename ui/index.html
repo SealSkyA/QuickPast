@@ -459,6 +459,10 @@ button:disabled{opacity:.45;box-shadow:none}
                   <span class="as-lbl">自动保存</span>
                   <label class="sw"><input type="checkbox" id="autoSave" onchange="autoSaveChange()"><i></i></label>
                 </div>
+                <div class="auto-sw">
+                  <span class="as-lbl">在线状态</span>
+                  <label class="sw"><input type="checkbox" id="netOnlineSw" onchange="netOnlineChange()"><i></i></label>
+                </div>
                 <div class="chint" style="margin:0">局域网内的设备可以向本机推送文件，接收后自动进入「文件」历史。</div>
               </div>
               <div class="notice" id="recvNotice" style="display:none">
@@ -551,7 +555,7 @@ button:disabled{opacity:.45;box-shadow:none}
         <div class="row"><div class="lbl"><b>单击行为</b><span>点击历史卡片后的动作</span></div><div class="ctl"><select><option>复制并粘贴</option><option>仅复制至剪切板</option></select></div></div>
         <div class="row"><div class="lbl"><b>默认分类</b><span>启动时定位到该分类（默认全部）</span></div><div class="ctl"><select id="defCatSel"><option value="all">全部</option><option value="text">文字</option><option value="img">图片</option><option value="file">文件</option><option value="fav">收藏</option><option value="note">便签</option></select></div></div>
         <div class="row"><div class="lbl"><b>页面字号</b><span>界面文字大小（12 – 20）</span></div><div class="ctl"><input type="number" id="fontSizeSel" value="14" min="12" max="20"></div></div>
-        <div class="row"><div class="lbl"><b>开机自启</b><span>登录 Windows 后自动启动</span></div><div class="ctl"><label class="sw"><input type="checkbox" checked><i></i></label></div></div>
+        <div class="row"><div class="lbl"><b>开机自启</b><span>登录 Windows 后自动启动</span></div><div class="ctl"><label class="sw"><input type="checkbox" id="bootSel" onchange="bootChange()"><i></i></label></div></div>
       </div>
       <div class="set" id="set-file">
         <div class="row"><div class="lbl"><b>快速保存</b><span>默认关：他人推送时需点接收</span></div><div class="ctl"><label class="sw"><input type="checkbox" id="fastSave"><i></i></label></div></div>
@@ -1667,6 +1671,32 @@ renderList(); renderDevs();
     if (typeof toast === 'function') toast(on ? '已开启自动保存：文件将自动存入保存目录' : '已关闭自动保存：接收需手动确认');
   };
 
+  /* —— 服务器在线/离线：接收页开关 ↔ 设置页下拉 ↔ 底栏 三处同步（同一个 net.online 设置） —— */
+  window.applyNetOnline = function (on) {
+    const sw = document.getElementById('netOnlineSw'); if (sw) sw.checked = !!on;
+    const sel = document.getElementById('netModeSel'); if (sel) sel.value = on ? 'true' : 'false';
+    if (typeof window.updateNetStat === 'function') window.updateNetStat(on);
+  };
+  window.netOnlineChange = function () {
+    const on = !!(document.getElementById('netOnlineSw') && document.getElementById('netOnlineSw').checked);
+    T.core.invoke('set_setting', { key: 'net.online', value: on }).catch(() => {});
+    if (typeof window.applyNetOnline === 'function') window.applyNetOnline(on);
+    if (typeof toast === 'function') toast(on ? '已上线：其他设备可发现本机' : '已离线：其他设备检测不到本机');
+  };
+  T.core.invoke('get_setting', { key: 'net.online' }).then(v => {
+    if (typeof window.applyNetOnline === 'function') window.applyNetOnline(v !== false);
+  }).catch(() => {});
+  /* —— 开机自启：设置值回填开关；切换时写入设置并实际调用系统自启（注册表 Run 键） —— */
+  window.bootChange = function () {
+    const on = !!(document.getElementById('bootSel') && document.getElementById('bootSel').checked);
+    T.core.invoke('qp_set_autostart', { on: on }).then(() => {
+      if (typeof toast === 'function') toast(on ? '已开启开机自启' : '已关闭开机自启');
+    }).catch(() => {});
+  };
+  T.core.invoke('get_setting', { key: 'autostart' }).then(v => {
+    const b = document.getElementById('bootSel'); if (b) b.checked = !!v;
+  }).catch(() => {});
+
   /* —— S3：接收确认 / 进度（多人同时发送 → 任务队列，一次处理一个，窗口叠加） —— */
   window.__incQueue = [];   // 待处理的接收任务（payload 列表）
   window.__incBusy = false; // 当前有弹窗/接收进行中
@@ -1807,12 +1837,12 @@ renderList(); renderDevs();
     if (sd && sd.value && sd.value.trim()) {
       T.core.invoke('set_setting', { key: 'net.saveDir', value: sd.value.trim() }).catch(() => {});
     }
-    // 服务器在线/离线
+    // 服务器在线/离线（与接收页开关、底栏同步为同一设置）
     const nm = document.getElementById('netModeSel');
     if (nm) {
       const on = nm.value === 'true';
       T.core.invoke('set_setting', { key: 'net.online', value: on }).catch(() => {});
-      if (typeof window.updateNetStat === 'function') window.updateNetStat(on);
+      if (typeof window.applyNetOnline === 'function') window.applyNetOnline(on);
     }
     // 监听端口（高级）
     const np = document.getElementById('netPortInput');
@@ -1903,9 +1933,7 @@ renderList(); renderDevs();
       const inp = document.getElementById('saveDirInput');
       if (inp && typeof sd === 'string' && sd) inp.value = sd;
       const nm = await T.core.invoke('get_setting', { key: 'net.online' }).catch(() => null);
-      const sel = document.getElementById('netModeSel');
-      if (sel) sel.value = String(nm === false ? false : true);
-      if (typeof window.updateNetStat === 'function') window.updateNetStat(nm !== false);
+      if (typeof window.applyNetOnline === 'function') window.applyNetOnline(nm !== false);
       const np = await T.core.invoke('get_setting', { key: 'net.port' }).catch(() => null);
       const npi = document.getElementById('netPortInput');
       if (npi) npi.value = (typeof np === 'number' && np > 0) ? np : 53317;

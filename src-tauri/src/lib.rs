@@ -84,6 +84,7 @@ pub fn run() {
             if let Some(w) = app.get_webview_window(MAIN_LABEL) {
                 let _ = w.unminimize();
                 let _ = w.show();
+                let _ = w.set_skip_taskbar(false);
                 let _ = w.set_focus();
             }
         }))
@@ -107,6 +108,7 @@ pub fn run() {
             cmds::qp_set_hotkey,
             cmds::qp_window_hide,
             cmds::qp_show_recv,
+            cmds::qp_set_autostart,
             cmds::qp_window_toggle_max,
             cmds::about_info,
             cmds::qp_check_update,
@@ -184,16 +186,12 @@ pub fn run() {
             let _ = settings::set_key(app.handle(), "hotkey", serde_json::json!(hotkey));
             apply_hotkey(app.handle(), &hotkey);
             setup_tray(app.handle())?;
-            apply_autostart(app)?;
             restore_geometry(app)?;
-            // 开机自启：静默启动（不显示主窗口，托盘/热键常驻）
-            let auto_start = settings::get_key(app.handle(), "autostart")
-                .ok()
-                .flatten()
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if auto_start {
+            // 开机自启：静默启动（不显示主窗口，托盘/热键常驻）。
+            // 仅在带 --hidden 参数启动时静默（开机自启注册表写入该参数）；手动双击启动 → 正常显示窗口。
+            if std::env::args().any(|a| a == "--hidden") {
                 if let Some(w) = app.get_webview_window(MAIN_LABEL) {
+                    let _ = w.set_skip_taskbar(true);
                     let _ = w.hide();
                 }
             }
@@ -207,6 +205,7 @@ pub fn run() {
             // ×/系统关闭请求：不退出应用，隐藏到系统托盘（进程常驻）
             WindowEvent::CloseRequested { api, .. } if window.label() == MAIN_LABEL => {
                 api.prevent_close();
+                let _ = window.set_skip_taskbar(true);
                 let _ = window.hide();
             }
             _ => {}
@@ -243,7 +242,7 @@ pub fn apply_hotkey(app: &AppHandle, combo: &str) {
         .on_shortcut(combo, |app, _sc, ev| {
             if ev.state() == ShortcutState::Pressed {
                 hlog("hotkey PRESSED → toggle_main");
-                toggle_main(app);
+                toggle_main(app, false);
             }
         });
     match ok {
@@ -258,7 +257,7 @@ pub fn apply_hotkey(app: &AppHandle, combo: &str) {
                 .global_shortcut()
                 .on_shortcut(prev.as_deref().unwrap_or("Ctrl+Alt+Z"), |app, _sc, ev| {
                     if ev.state() == ShortcutState::Pressed {
-                        toggle_main(app);
+                        toggle_main(app, false);
                     }
                 });
             *st.cur.lock().unwrap() = prev;
@@ -286,9 +285,9 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         // 左键不弹菜单（左键仅呼出/隐藏；菜单只在右键显示）
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => toggle_main(app),
+            "show" => toggle_main(app, true),
             "settings" => {
-                toggle_main(app);
+                toggle_main(app, true);
                 let _ = app.emit("qp:open-settings", ());
             }
             "about" => {
@@ -305,7 +304,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                toggle_main(tray.app_handle());
+                toggle_main(tray.app_handle(), true);
             }
         })
         .build(app)?;
@@ -314,15 +313,18 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 
 /* ────────────── 窗口辅助 ────────────── */
 
-fn toggle_main(app: &AppHandle) {
+fn toggle_main(app: &AppHandle, show_taskbar: bool) {
     if let Some(w) = app.get_webview_window(MAIN_LABEL) {
-        hlog(&format!("toggle_main: visible={:?}", w.is_visible()));
+        hlog(&format!("toggle_main(show_taskbar={show_taskbar}): visible={:?}", w.is_visible()));
         if w.is_visible().unwrap_or(false) {
+            let _ = w.set_skip_taskbar(true); // 隐藏 → 任务栏图标一并移除（只留托盘图标）
             let r = w.hide();
             hlog(&format!("hide → {:?}", r));
         } else {
             let _ = w.unminimize(); // 从任务栏/最小化状态还原
             let _ = w.show();
+            // 快捷键呼出：任务栏不显示图标（只留托盘）；单击托盘呼出：任务栏图标正常显示
+            let _ = w.set_skip_taskbar(!show_taskbar);
             let _ = w.set_focus();
             hlog("show+focus");
         }
@@ -372,21 +374,6 @@ fn schedule_geom_save(app: AppHandle) {
             let _ = settings::set_key(&app, GEOM_KEY, v);
         }
     }
-}
-
-/* ────────────── 自启 ────────────── */
-
-fn apply_autostart(app: &mut App) -> tauri::Result<()> {
-    use tauri_plugin_autostart::ManagerExt;
-    let enable = settings::get_key(app.handle(), "autostart")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if enable {
-        let _ = app.autolaunch().enable();
-    }
-    Ok(())
 }
 
 /* ────────────── 数据迁移：AppData(C盘) → 安装路径 ────────────── */

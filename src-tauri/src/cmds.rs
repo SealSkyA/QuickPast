@@ -77,10 +77,47 @@ pub fn qp_set_hotkey(app: AppHandle, combo: String) -> Result<(), String> {
 /// 主窗口隐藏到系统托盘（点 × 不退出应用，任务栏不留；托盘/热键可再呼出）
 #[tauri::command]
 pub fn qp_window_hide(app: AppHandle) -> Result<(), String> {
-    app.get_webview_window(crate::MAIN_LABEL)
-        .ok_or_else(|| "主窗口不存在".to_string())?
-        .hide()
-        .map_err(|e| e.to_string())
+    let win = app
+        .get_webview_window(crate::MAIN_LABEL)
+        .ok_or_else(|| "主窗口不存在".to_string())?;
+    let _ = win.set_skip_taskbar(true); // 隐藏进托盘 → 任务栏不保留图标
+    win.hide().map_err(|e| e.to_string())
+}
+
+/// 开机自启开关：写入设置并立即生效（Windows 注册表 Run 键）。
+/// 自启启动附带 --hidden 参数 → 开机时静默运行（托盘常驻）；手动双击启动仍正常显示窗口。
+#[tauri::command]
+pub fn qp_set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
+    if on {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let cmd = format!("\"{}\" --hidden", exe.to_string_lossy());
+        let out = std::process::Command::new("reg")
+            .args([
+                "add",
+                "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                "/v",
+                "QuickPaste",
+                "/d",
+                &cmd,
+                "/f",
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err("写入开机自启注册表失败".to_string());
+        }
+    } else {
+        let _ = std::process::Command::new("reg")
+            .args([
+                "delete",
+                "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                "/v",
+                "QuickPaste",
+                "/f",
+            ])
+            .output();
+    }
+    settings::set_key(&app, "autostart", Value::Bool(on)).map_err(|e| e.to_string())
 }
 
 /// 接收任务到达时确保主窗口可见：
@@ -94,6 +131,7 @@ pub fn qp_show_recv(app: AppHandle) -> Result<(), String> {
     let _ = win.unminimize();
     let was_visible = win.is_visible().unwrap_or(false);
     let _ = win.show();
+    let _ = win.set_skip_taskbar(false); // 接收任务呼出 → 任务栏图标正常显示
     let _ = win.set_focus();
     if !was_visible {
         // 托盘/隐藏态：定位到主显示器右下角（距右缘 24px、距底缘 64px 近似任务栏高度）
