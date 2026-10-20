@@ -83,6 +83,35 @@ pub fn qp_window_hide(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// 接收任务到达时确保主窗口可见：
+/// 窗口在托盘/隐藏态 → 呼出并定位到主显示器右下角（像系统通知一样弹出接收请求）；
+/// 窗口本就可见 → 保持原位不动，只还原最小化并聚焦。
+#[tauri::command]
+pub fn qp_show_recv(app: AppHandle) -> Result<(), String> {
+    let win = app
+        .get_webview_window(crate::MAIN_LABEL)
+        .ok_or_else(|| "主窗口不存在".to_string())?;
+    let _ = win.unminimize();
+    let was_visible = win.is_visible().unwrap_or(false);
+    let _ = win.show();
+    let _ = win.set_focus();
+    if !was_visible {
+        // 托盘/隐藏态：定位到主显示器右下角（距右缘 24px、距底缘 64px 近似任务栏高度）
+        if let Ok(Some(mon)) = app.primary_monitor() {
+            let mpos = mon.position();
+            let msz = mon.size();
+            if let Ok(psz) = win.outer_size() {
+                let w = psz.width as i32;
+                let h = psz.height as i32;
+                let x = mpos.x + msz.width as i32 - w - 24;
+                let y = mpos.y + msz.height as i32 - h - 64;
+                let _ = win.set_position(Position::Physical(PhysicalPosition::new(x, y)));
+            }
+        }
+    }
+    Ok(())
+}
+
 /* ────────────── 关于与升级（S6） ────────────── */
 
 /// 关于信息：应用名 / 版本 / 作者 / 升级记录

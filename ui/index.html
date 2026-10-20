@@ -1701,6 +1701,13 @@ renderList(); renderDevs();
         : svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>')) +
         '<span class="in">' + esc(f.fileName) + (isTxt ? ' <em style="color:var(--acc);font-style:normal">文本·会复制到剪贴板</em>' : '') + '</span><span class="sz">' + fmtSize(f.size || 0) + '</span></div>';
     }).join('');
+    // 窗口侧：托盘/隐藏态收到任务 → 呼出主窗口并定位到屏幕右下角（可见时保持原位只聚焦）
+    if (typeof qpInvoke === 'function') qpInvoke('qp_show_recv').catch(() => {});
+    // 页面侧：接收弹窗只出现在「文件传输-接收」页，在快捷粘贴页收到任务时自动切过去
+    const pgFile = document.getElementById('pg-file');
+    if (typeof switchPage === 'function' && pgFile && !pgFile.classList.contains('on')) {
+      switchPage('file');
+    }
     if (typeof openModal === 'function') openModal('m-incoming');
   }
   listen('qp:incoming', e => {

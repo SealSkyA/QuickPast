@@ -106,6 +106,7 @@ pub fn run() {
             cmds::qp_debug_resize,
             cmds::qp_set_hotkey,
             cmds::qp_window_hide,
+            cmds::qp_show_recv,
             cmds::qp_window_toggle_max,
             cmds::about_info,
             cmds::qp_check_update,
