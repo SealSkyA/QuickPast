@@ -149,7 +149,8 @@ pub fn run() {
             net::net_send_text,
             net::net_share,
             net::net_set_alias,
-            net::net_my_info
+            net::net_my_info,
+            cmds::qp_save_drag_files
         ])
         .setup(|app| {
             // 数据迁移：旧版本数据在 C 盘 AppData，新版本统一存安装路径 → 一次性复制

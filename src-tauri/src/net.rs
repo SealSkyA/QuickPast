@@ -1029,23 +1029,35 @@ fn safe_name(s: &str) -> String {
 
 /// 向对端设备发送一批文件（path 为本地文件路径）。
 /// app 传 None 时跳过事件推送（供集成测试调用）。
-pub fn send_files(app: Option<&AppHandle>, device: &Device, paths: &[String]) -> Result<(), String> {
+/// names：与 paths 对应的显示名（可选；拖放临时文件路径带时间戳前缀，用显示名覆盖文件名）
+pub fn send_files(
+    app: Option<&AppHandle>,
+    device: &Device,
+    paths: &[String],
+    names: Option<&[String]>,
+) -> Result<(), String> {
     if paths.is_empty() {
         return Err("没有要发送的文件".into());
     }
     let mut files_map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
     let mut ids: Vec<String> = Vec::new();
-    for p in paths {
+    for (i, p) in paths.iter().enumerate() {
         let pb = PathBuf::from(p);
         let meta = std::fs::metadata(&pb).map_err(|e| format!("读取文件失败 {p}: {e}"))?;
         if !meta.is_file() {
             return Err(format!("不是文件：{p}"));
         }
         let file_id = Uuid::new_v4().to_string();
-        let name = pb
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
+        // 显示名优先取 names[i]（拖放临时文件时用原始文件名），否则取路径文件名
+        let name = names
+            .and_then(|ns| ns.get(i))
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .unwrap_or_else(|| {
+                pb.file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            });
         let mime = mime_of(&name);
         files_map.insert(
             file_id.clone(),
@@ -1155,7 +1167,7 @@ pub fn test_send(app: AppHandle, spec: &str) {
             last_seen: 0,
         };
         std::thread::sleep(std::time::Duration::from_millis(3000)); // 等服务端就绪
-        match send_files(Some(&app), &dev, &paths) {
+        match send_files(Some(&app), &dev, &paths, None) {
             Ok(()) => log("QP_SEND_TEST 发送成功"),
             Err(e) => log(&format!("QP_SEND_TEST 发送失败: {e}")),
         }
@@ -1228,9 +1240,15 @@ pub fn net_reject(app: AppHandle, session_id: String) -> Result<(), String> {
 }
 
 /// 发送文件到指定设备（S3 界面复用）
+/// names：与 paths 对应的显示名（可选；拖放临时文件时覆盖路径截取的文件名）
 #[tauri::command]
-pub fn net_send(app: AppHandle, device: Device, paths: Vec<String>) -> Result<(), String> {
-    send_files(Some(&app), &device, &paths)
+pub fn net_send(
+    app: AppHandle,
+    device: Device,
+    paths: Vec<String>,
+    names: Option<Vec<String>>,
+) -> Result<(), String> {
+    send_files(Some(&app), &device, &paths, names.as_deref())
 }
 
 /// 发送纯文本到指定设备：采用 LocalSend v2 文本消息（fileType=text），

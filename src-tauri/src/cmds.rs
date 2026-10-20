@@ -531,3 +531,37 @@ pub fn qp_resize_begin(app: AppHandle, direction: String) -> Result<(), String> 
     });
     Ok(())
 }
+
+/* ────────────── 拖放文件（HTML5 dataTransfer → 临时文件） ────────────── */
+
+/// WebView2 的 HTML5 拖放拿不到磁盘路径（File.path 未注入），
+/// 前端读文件内容后经 IPC 传来，由本命令写入 %TEMP%\qp-drag\ 临时文件，
+/// 返回磁盘绝对路径列表供发送链路使用。
+#[derive(serde::Deserialize)]
+pub struct DragIn {
+    name: String,
+    data: Vec<u8>,
+}
+
+#[tauri::command]
+pub fn qp_save_drag_files(files: Vec<DragIn>) -> Result<Vec<String>, String> {
+    let dir = std::env::temp_dir().join("qp-drag");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for (i, f) in files.iter().enumerate() {
+        // 只用文件名部分，防路径穿越
+        let base = std::path::Path::new(&f.name)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("file{i}"));
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let p = dir.join(format!("{ts}_{i}_{base}"));
+        std::fs::write(&p, &f.data).map_err(|e| e.to_string())?;
+        out.push(p.to_string_lossy().to_string());
+    }
+    Ok(out)
+}

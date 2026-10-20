@@ -1275,17 +1275,23 @@ function pickType(el,name){
   sendType=name;
   document.querySelectorAll('.send-types .st').forEach(x=>x.classList.toggle('on', x===el));
   if(name==='文件' || name==='文件夹'){
-    const inp=document.createElement('input');
-    inp.type='file'; inp.multiple=true;
-    if(name==='文件夹') inp.setAttribute('webkitdirectory','');
-    inp.onchange=()=>{
-      for(const f of inp.files){
-        SEL.push({type:'file', path:(f.path||''), name:f.name, size:fmtSize(f.size||0)});
-      }
+    // WebView2 下 <input type=file> 拿不到文件路径（File.path 在 Tauri 2 未注入），
+    // 改用 tauri-plugin-dialog 原生选择框，直接返回磁盘绝对路径。
+    const opt = { multiple:true };
+    if(name==='文件夹') opt.directory = true;
+    __TAURI__.dialog.open(opt).then(paths=>{
+      if(!paths) return;
+      if(typeof paths==='string') paths=[paths];
+      let n=0;
+      paths.forEach(p=>{
+        if(!p) return;
+        const nm = p.split(/[\\/]/).pop() || p;
+        if(!SEL.some(s=>s.path===p)){ SEL.push({type:'file', path:p, name:nm, size:''}); n++; }
+      });
+      if(!n){ if(paths.length) toast('这些文件已在待发送列表'); return; }
       renderSel();
-      if(SEL.length) toast('已添加 '+inp.files.length+' 项');
-    };
-    inp.click();
+      toast('已添加 '+n+' 项');
+    }).catch(e=>toast('选择文件失败：'+e, true));
     return;
   }
   if(name==='粘贴板'){
@@ -1350,9 +1356,11 @@ async function doSendTo(d){
   }else{
     const paths=SEL.map(s=>s.path).filter(Boolean);
     if(!paths.length){ toast('无法获取所选文件的路径，请重新选择', true); return false; }
+    // names：与 paths 对应的显示名（拖放临时文件的原始名，避免对方收到带时间戳前缀的临时文件名）
+    const names = SEL.map(s=>s.name);
     showXp(1,paths.length,'发送中');
     try{
-      await qpInvoke('net_send',{device:d.raw, paths});
+      await qpInvoke('net_send',{device:d.raw, paths, names});
       toast('已发送 '+paths.length+' 个文件 → '+d.name);
     }catch(e){ toast('发送失败：'+e, true); hideXp(); return false; }
   }
@@ -1380,13 +1388,50 @@ function handleDroppedPaths(paths){
   if(typeof toast === 'function') toast('已添加 '+n+' 个文件，选择目标设备后发送');
   return n;
 }
+// WebView2 下 Tauri 原生拖放 handler 未生效（本环境实测 tauri://drag-drop 不派发），
+// 故禁用该 handler 让 HTML5 拖放接管；但 HTML5 的 File 对象没有磁盘路径（File.path 未注入），
+// 因此读取文件内容经 IPC 写入临时文件换取磁盘路径。
+const DRAG_TMP_MAX = 60 * 1024 * 1024; // 超过 60MB 提示用「文件」按钮（走原生对话框，不占内存）
 document.addEventListener('drop', e=>{
   e.preventDefault();
-  // 浏览器环境兜底（WebView2 下从桌面拖入的文件不在此通道，走 tauri://drag-drop）
-  const files = e.dataTransfer ? [...e.dataTransfer.files] : [];
-  if(files.length) handleDroppedPaths(files.map(f=>f.path).filter(Boolean));
+  const dt = e.dataTransfer;
+  if(!dt) return;
+  const files = [...dt.files];
+  if(!files.length){
+    // 目录拖放：HTML5 的 files 不含目录项 → 提示走「文件夹」按钮
+    if(typeof toast === 'function') toast('文件夹请用发送页的「文件夹」按钮选择', true);
+    return;
+  }
+  // 若环境注入了 path（其它平台/版本），优先直接用
+  const withPath = files.map(f=>f.path).filter(Boolean);
+  if(withPath.length === files.length){ handleDroppedPaths(withPath); return; }
+  // 无 path → 读内容 → Rust 写临时文件
+  const big = files.find(f=>f.size > DRAG_TMP_MAX);
+  if(big){
+    if(typeof toast === 'function') toast('拖放文件过大，请用发送页的「文件」按钮选择后发送', true);
+    return;
+  }
+  Promise.all(files.map(f =>
+    f.arrayBuffer().then(buf => ({ name: f.name, data: Array.from(new Uint8Array(buf)) }))
+  ))
+  .then(arr => qpInvoke('qp_save_drag_files', { files: arr }))
+  .then(paths => {
+    const list = Array.isArray(paths)? paths : [paths];
+    let n = 0;
+    list.forEach((p, i) => {
+      if(!p) return;
+      const f = files[i] || {};
+      // 临时文件路径带时间戳前缀，显示名用原始文件名（发送内容不受影响）
+      const nm = f.name || p.split(/[\\/]/).pop() || '文件';
+      if(!SEL.some(s=>s.path===p)){ SEL.push({type:'file', path:p, name:nm, size: fmtSize(f.size||0)}); n++; }
+    });
+    if(!n) return;
+    renderSel(); switchPage('file');
+    if(typeof toast === 'function') toast('已添加 '+n+' 个文件，选择目标设备后发送');
+  })
+  .catch(err => { if(typeof toast === 'function') toast('处理拖放文件失败：'+err, true); });
 });
-// Tauri 原生拖放：从桌面/资源管理器拖入文件时由 WebView 派发该事件（paths 为文件绝对路径）
+// Tauri 原生拖放（部分平台/配置可用；本环境未生效，保留兼容）
 window.addEventListener('tauri://drag-drop', e=>{
   const p = e && (e.payload || e.detail);
   if(p && p.paths) handleDroppedPaths(p.paths);
