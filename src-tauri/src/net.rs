@@ -1182,7 +1182,7 @@ fn collect_dir_entries(dir: &Path, rel: &str, out: &mut Vec<(PathBuf, String)>) 
 /// 向对端设备发送一批文件（path 为本地文件或目录路径，目录会递归展开并保留目录结构）。
 /// app 传 None 时跳过事件推送（供集成测试调用）。
 /// names：与 paths 对应的显示名（可选；拖放临时文件路径带时间戳前缀，用显示名覆盖文件名）
-/// text：可选文本，与文件在同一会话一起发送（fileType=text，接收方直接写入剪贴板），可与文件混合
+/// text：可选文本，写入临时 .txt 后与文件同一会话发送（文件通道兼容性最好），发送后删除临时文件
 pub fn send_files(
     app: Option<&AppHandle>,
     device: &Device,
@@ -1191,116 +1191,95 @@ pub fn send_files(
     text: Option<String>,
 ) -> Result<(), String> {
     let text = text.filter(|t| !t.trim().is_empty());
-    let items = expand_send_paths(paths, names)?;
-    if items.is_empty() && text.is_none() {
+    let mut items = expand_send_paths(paths, names)?;
+    // 文本 → 临时 .txt 文件，随文件一起走文件通道上传（对端统一按文件接收，最稳妥）
+    let mut tmp_txt: Option<std::path::PathBuf> = None;
+    if let Some(t) = &text {
+        let p = std::env::temp_dir().join(format!("qp_text_{}.txt", Uuid::new_v4()));
+        std::fs::write(&p, t).map_err(|e| format!("写入临时文本文件失败：{e}"))?;
+        items.push((p.clone(), "剪贴板.txt".to_string()));
+        tmp_txt = Some(p);
+    }
+    if items.is_empty() {
+        if let Some(p) = &tmp_txt {
+            let _ = std::fs::remove_file(p);
+        }
         return Err("所选内容里没有可发送的内容".into());
     }
-    let mut files_map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
-    let mut ids: Vec<String> = Vec::new();
-    for (path, name) in &items {
-        let meta = std::fs::metadata(path).map_err(|e| format!("读取文件失败 {path:?}: {e}"))?;
-        let file_id = Uuid::new_v4().to_string();
-        let mime = mime_of(name);
-        files_map.insert(
-            file_id.clone(),
-            serde_json::json!({
-                "id": file_id,
-                "fileName": name,
-                "size": meta.len(),
-                "fileType": mime,
-            }),
-        );
-        ids.push(file_id);
-    }
-    let mut text_id: Option<String> = None;
-    if let Some(t) = &text {
-        let file_id = Uuid::new_v4().to_string();
-        files_map.insert(
-            file_id.clone(),
-            serde_json::json!({
-                "id": file_id,
-                "fileName": "剪贴板.txt",
-                "size": t.len(),
-                "fileType": "text",
-            }),
-        );
-        text_id = Some(file_id.clone());
-        ids.push(file_id);
-    }
-    let base = format!("http://{}:{}/api/localsend/v2", device.ip, device.port);
-    let req_body = serde_json::json!({ "info": my_info(app), "files": files_map });
-
-    // prepare-upload
-    let resp = ureq::post(&format!("{base}/prepare-upload"))
-        .timeout(Duration::from_secs(60))
-        .set("Content-Type", "application/json")
-        .send_string(&req_body.to_string())
-        .map_err(|e| match e {
-            ureq::Error::Status(403, _) => "对端拒绝了发送".into(),
-            ureq::Error::Status(409, _) => "对端正忙（其他会话进行中）".into(),
-            ureq::Error::Status(code, _) => format!("对端返回 HTTP {code}"),
-            ureq::Error::Transport(t) => format!("无法连接对端：{t}"),
-        })?;
-    let body = resp.into_string().unwrap_or_default();
-    let v: serde_json::Value =
-        serde_json::from_str(&body).map_err(|_| "对端响应格式错误".to_string())?;
-    let session_id = v["sessionId"]
-        .as_str()
-        .ok_or("对端未返回 sessionId")?
-        .to_string();
-    let tokens: HashMap<String, String> = serde_json::from_value(v["files"].clone())
-        .map_err(|_| "对端未返回文件令牌".to_string())?;
-
-    // 逐文件上传（流式发送，大文件不整体读入内存）
-    for (i, id) in ids.iter().enumerate() {
-        if Some(id) == text_id.as_ref() {
-            continue; // 文本最后统一上传
-        }
-        let token = tokens.get(id).ok_or("对端未接受该文件")?.clone();
-        let mut f = std::fs::File::open(&items[i].0).map_err(|e| format!("打开文件失败：{e}"))?;
-        let url = format!("{base}/upload?sessionId={session_id}&fileId={id}&token={token}");
-        let r = ureq::post(&url)
-            .timeout(Duration::from_secs(300))
-            .send(&mut f)
-            .map_err(|e| match e {
-                ureq::Error::Status(code, r) => {
-                    format!("上传失败（HTTP {code}: {})", r.into_string().unwrap_or_default())
-                }
-                ureq::Error::Transport(t) => format!("上传失败：{t}"),
-            })?;
-        drop(r);
-        if let Some(a) = app {
-            let _ = a.emit(
-                "qp:send_progress",
-                serde_json::json!({"index": i + 1, "total": ids.len(), "file": &items[i].1}),
+    let result = (|| -> Result<(), String> {
+        let mut files_map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+        let mut ids: Vec<String> = Vec::new();
+        for (path, name) in &items {
+            let meta = std::fs::metadata(path).map_err(|e| format!("读取文件失败 {path:?}: {e}"))?;
+            let file_id = Uuid::new_v4().to_string();
+            let mime = mime_of(name);
+            files_map.insert(
+                file_id.clone(),
+                serde_json::json!({
+                    "id": file_id,
+                    "fileName": name,
+                    "size": meta.len(),
+                    "fileType": mime,
+                }),
             );
+            ids.push(file_id);
         }
-    }
-    // 文本上传（不落盘，body 为纯文本；与文件同一会话）
-    if let (Some(fid), Some(t)) = (&text_id, text.as_ref()) {
-        let token = tokens.get(fid).ok_or("对端未接受该文本")?.clone();
-        let url = format!("{base}/upload?sessionId={session_id}&fileId={fid}&token={token}");
-        let r = ureq::post(&url)
+        let base = format!("http://{}:{}/api/localsend/v2", device.ip, device.port);
+        let req_body = serde_json::json!({ "info": my_info(app), "files": files_map });
+
+        // prepare-upload
+        let resp = ureq::post(&format!("{base}/prepare-upload"))
             .timeout(Duration::from_secs(60))
-            .send_string(t)
+            .set("Content-Type", "application/json")
+            .send_string(&req_body.to_string())
             .map_err(|e| match e {
-                ureq::Error::Status(code, r) => {
-                    format!("文本发送失败（HTTP {code}: {})", r.into_string().unwrap_or_default())
-                }
-                ureq::Error::Transport(te) => format!("文本发送失败：{te}"),
+                ureq::Error::Status(403, _) => "对端拒绝了发送".into(),
+                ureq::Error::Status(409, _) => "对端正忙（其他会话进行中）".into(),
+                ureq::Error::Status(code, _) => format!("对端返回 HTTP {code}"),
+                ureq::Error::Transport(t) => format!("无法连接对端：{t}"),
             })?;
-        drop(r);
-        if let Some(a) = app {
-            let _ = a.emit(
-                "qp:send_progress",
-                serde_json::json!({"index": ids.len(), "total": ids.len(), "file": "剪贴板.txt"}),
-            );
+        let body = resp.into_string().unwrap_or_default();
+        let v: serde_json::Value =
+            serde_json::from_str(&body).map_err(|_| "对端响应格式错误".to_string())?;
+        let session_id = v["sessionId"]
+            .as_str()
+            .ok_or("对端未返回 sessionId")?
+            .to_string();
+        let tokens: HashMap<String, String> = serde_json::from_value(v["files"].clone())
+            .map_err(|_| "对端未返回文件令牌".to_string())?;
+
+        // 逐文件上传（流式发送，大文件不整体读入内存；文本临时文件在 items 中一并上传）
+        for (i, id) in ids.iter().enumerate() {
+            let token = tokens.get(id).ok_or("对端未接受该文件")?.clone();
+            let mut f = std::fs::File::open(&items[i].0).map_err(|e| format!("打开文件失败：{e}"))?;
+            let url = format!("{base}/upload?sessionId={session_id}&fileId={id}&token={token}");
+            let r = ureq::post(&url)
+                .timeout(Duration::from_secs(300))
+                .send(&mut f)
+                .map_err(|e| match e {
+                    ureq::Error::Status(code, r) => {
+                        format!("上传失败（HTTP {code}: {})", r.into_string().unwrap_or_default())
+                    }
+                    ureq::Error::Transport(t) => format!("上传失败：{t}"),
+                })?;
+            drop(r);
+            if let Some(a) = app {
+                let _ = a.emit(
+                    "qp:send_progress",
+                    serde_json::json!({"index": i + 1, "total": ids.len(), "file": &items[i].1}),
+                );
+            }
         }
+        if let Some(a) = app {
+            let _ = a.emit("qp:send_done", serde_json::json!({"device": device.alias}));
+        }
+        Ok(())
+    })();
+    // 无论成败，清理临时文本文件
+    if let Some(p) = &tmp_txt {
+        let _ = std::fs::remove_file(p);
     }
-    if let Some(a) = app {
-        let _ = a.emit("qp:send_done", serde_json::json!({"device": device.alias}));
-    }
-    Ok(())
+    result
 }
 
 fn mime_of(name: &str) -> String {
