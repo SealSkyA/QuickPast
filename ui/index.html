@@ -567,7 +567,7 @@ button:disabled{opacity:.45;box-shadow:none}
         <div class="row"><div class="lbl"><b>别名</b><span>其他设备看到的名称（修改后点保存立即广播）</span></div><div class="ctl"><input type="text" id="setAlias" style="width:130px;text-align:center"></div></div>
         <details class="adv">
           <summary>高级设置</summary>
-          <div class="row"><div class="lbl"><b>监听端口</b><span>局域网服务端口（默认 53317，修改后重启生效）</span></div><div class="ctl"><input type="number" id="netPortInput" min="1" max="65535" style="width:100px;text-align:center"></div></div>
+          <div class="row"><div class="lbl"><b>监听端口</b><span>局域网服务端口（默认 53318，修改后重启生效）</span></div><div class="ctl"><input type="number" id="netPortInput" min="1" max="65535" style="width:100px;text-align:center"></div></div>
           <div class="row"><div class="lbl"><b>搜索设备超时</b><span>设备离线判定时长（秒，默认 25，范围 5–600）</span></div><div class="ctl"><input type="number" id="netDeviceTtlInput" min="5" max="600" style="width:100px;text-align:center"></div></div>
           <div class="row"><div class="lbl"><b>缓存</b><span>图片缩略等临时文件</span></div>
             <div class="ctl" style="display:flex;gap:8px"><button onclick="openCacheDir()">打开目录</button><button onclick="clearCache()">清空缓存</button></div></div>
@@ -1928,7 +1928,7 @@ renderList(); renderDevs(); loadFav();
     // 监听端口（高级）
     const np = document.getElementById('netPortInput');
     if (np && np.value) {
-      const n = Math.min(65535, Math.max(1, parseInt(np.value, 10) || 53317));
+      const n = Math.min(65535, Math.max(1, parseInt(np.value, 10) || 53318));
       T.core.invoke('set_setting', { key: 'net.port', value: n }).catch(() => {});
     }
     // 搜索设备超时（高级）
@@ -2016,7 +2016,7 @@ renderList(); renderDevs(); loadFav();
       if (typeof window.applyNetOnline === 'function') window.applyNetOnline(nm !== false);
       const np = await T.core.invoke('get_setting', { key: 'net.port' }).catch(() => null);
       const npi = document.getElementById('netPortInput');
-      if (npi) npi.value = (typeof np === 'number' && np > 0) ? np : 53317;
+      if (npi) npi.value = (typeof np === 'number' && np > 0) ? np : 53318;
       const nt = await T.core.invoke('get_setting', { key: 'net.deviceTtl' }).catch(() => null);
       const nti = document.getElementById('netDeviceTtlInput');
       if (nti) nti.value = (typeof nt === 'number' && nt >= 5) ? nt : 25;

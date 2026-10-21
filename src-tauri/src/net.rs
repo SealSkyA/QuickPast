@@ -1,6 +1,6 @@
 //! S2 传输核心：LocalSend v2 兼容（规格见 docs/实施/01-协议实现规格.md）。
-//! UDP 组播发现（224.0.0.167:53317 JSON announce → HTTP register 单播回执）
-//! + HTTP 服务器（0.0.0.0:53317，register/info/prepare-upload/upload/cancel）
+//! UDP 组播发现（224.0.0.167:53318 JSON announce → HTTP register 单播回执）
+//! + HTTP 服务器（0.0.0.0:53318，register/info/prepare-upload/upload/cancel）
 //! + 接收会话（单槽、IP 绑定、每文件 token、sha256 校验）+ 发送客户端。
 
 use std::collections::HashMap;
@@ -18,14 +18,14 @@ use uuid::Uuid;
 
 use clipboard_rs::Clipboard;
 
-pub const PORT: u16 = 53317;
+pub const PORT: u16 = 53318;
 const MC_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 167);
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(10);
 const DEVICE_TTL: Duration = Duration::from_secs(25); // 2 轮 announce 未回应 → 离线
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(60); // 接收确认等待
 const VERSION: &str = "2.2";
 
-/// 监听/广播端口：优先级 QP_PORT 环境变量 > 设置 net.port > 默认 53317
+/// 监听/广播端口：优先级 QP_PORT 环境变量 > 设置 net.port > 默认 53318
 fn port(app: Option<&AppHandle>) -> u16 {
     if let Ok(p) = std::env::var("QP_PORT") {
         if let Ok(n) = p.parse::<u16>() {
