@@ -350,12 +350,6 @@ button:disabled{opacity:.45;box-shadow:none}
   box-shadow:var(--up);opacity:0;pointer-events:none;transition:.25s;z-index:80;max-width:86vw;text-align:center}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .toast.err{color:var(--err)}
-.badge-pin{position:fixed;left:50%;top:12px;transform:translateX(-50%);
-  background:var(--card);color:var(--acc);font-size:11.5px;font-weight:600;padding:5px 12px;
-  border-radius:999px;box-shadow:var(--up-sm);z-index:70;display:none;align-items:center;gap:5px}
-.badge-pin .ico{width:12px;height:12px}
-.badge-pin.on{display:flex}
-
 /* ── 无边框窗口缩放热区：四边 + 四角（角缩放由系统保持宽高比） ── */
 #rz{position:fixed;inset:0;pointer-events:none;z-index:99999}
 #rz i{position:fixed;pointer-events:auto;touch-action:none}
@@ -672,7 +666,6 @@ button:disabled{opacity:.45;box-shadow:none}
 </div>
 
 <div class="toast" id="toast"></div>
-<div class="badge-pin" id="pinBadge"><svg class="ico" viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>已置顶</div>
 
 <script>
 /* ═══════ 数据（S1 真实剪贴板历史，运行时由 history_load 填充） ═══════ */
@@ -708,8 +701,8 @@ function switchPage(p){
   document.querySelectorAll('#win-main .t-tab').forEach((t,i)=>t.classList.toggle('on', (p==='quick'&&i===0)||(p==='file'&&i===1)));
   document.getElementById('pg-quick').classList.toggle('on', p==='quick');
   document.getElementById('pg-file').classList.toggle('on', p==='file');
-  if(p==='file'){ document.getElementById('wPin').classList.add('on'); showPinBadge(true); probeDevices(); }
-  else if(!editMode){ document.getElementById('wPin').classList.remove('on'); showPinBadge(false); }
+  if(p==='file'){ document.getElementById('wPin').classList.add('on'); probeDevices(); }
+  else if(!editMode){ document.getElementById('wPin').classList.remove('on'); }
 }
 /* 探查设备：进入发送页自动触发一次组播发现；雷达图标旋转表示进行中 */
 function probeDevices(){
@@ -728,10 +721,9 @@ function doRefresh(){
   setTimeout(()=>{ const ri2=document.getElementById('refreshIco'); if(ri2) ri2.classList.remove('spin'); }, 1300);
 }
 function togglePin(){
-  const b=document.getElementById('wPin').classList.toggle('on');
-  showPinBadge(b); 
+  // 置顶状态由顶栏右侧置顶图标展示（已置顶徽标已移除，避免与图标重复）
+  document.getElementById('wPin').classList.toggle('on');
 }
-function showPinBadge(v){ document.getElementById('pinBadge').classList.toggle('on', v); }
 function trayMenu(act){
   if(act==='close'){
     // ×：隐藏到系统托盘（任务栏不留，进程常驻；托盘/热键可再呼出）
@@ -1610,7 +1602,6 @@ renderList(); renderDevs(); loadFav();
     const b = document.getElementById('wPin');
     const on = !b.classList.contains('on');
     b.classList.toggle('on', on);
-    if (typeof showPinBadge === 'function') showPinBadge(on);
     const w = await curWin();
     if (w) await w.setAlwaysOnTop(on);
     try { await T.core.invoke('set_setting', { key: 'pin', value: on }); } catch (e) {}
@@ -2015,7 +2006,6 @@ renderList(); renderDevs(); loadFav();
       const pin = await T.core.invoke('get_setting', { key: 'pin' });
       if (pin) {
         document.getElementById('wPin').classList.add('on');
-        if (typeof showPinBadge === 'function') showPinBadge(true);
         const w = await curWin(); if (w) await w.setAlwaysOnTop(true);
       }
       // 文件传输设置填充（保存目录显示当前生效路径：自定义 → 默认桌面）
