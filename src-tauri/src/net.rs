@@ -1182,18 +1182,18 @@ fn collect_dir_entries(dir: &Path, rel: &str, out: &mut Vec<(PathBuf, String)>) 
 /// 向对端设备发送一批文件（path 为本地文件或目录路径，目录会递归展开并保留目录结构）。
 /// app 传 None 时跳过事件推送（供集成测试调用）。
 /// names：与 paths 对应的显示名（可选；拖放临时文件路径带时间戳前缀，用显示名覆盖文件名）
+/// text：可选文本，与文件在同一会话一起发送（fileType=text，接收方直接写入剪贴板），可与文件混合
 pub fn send_files(
     app: Option<&AppHandle>,
     device: &Device,
     paths: &[String],
     names: Option<&[String]>,
+    text: Option<String>,
 ) -> Result<(), String> {
-    if paths.is_empty() {
-        return Err("没有要发送的文件".into());
-    }
+    let text = text.filter(|t| !t.trim().is_empty());
     let items = expand_send_paths(paths, names)?;
-    if items.is_empty() {
-        return Err("所选内容里没有可发送的文件".into());
+    if items.is_empty() && text.is_none() {
+        return Err("所选内容里没有可发送的内容".into());
     }
     let mut files_map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
     let mut ids: Vec<String> = Vec::new();
@@ -1210,6 +1210,21 @@ pub fn send_files(
                 "fileType": mime,
             }),
         );
+        ids.push(file_id);
+    }
+    let mut text_id: Option<String> = None;
+    if let Some(t) = &text {
+        let file_id = Uuid::new_v4().to_string();
+        files_map.insert(
+            file_id.clone(),
+            serde_json::json!({
+                "id": file_id,
+                "fileName": "剪贴板.txt",
+                "size": t.len(),
+                "fileType": "text",
+            }),
+        );
+        text_id = Some(file_id.clone());
         ids.push(file_id);
     }
     let base = format!("http://{}:{}/api/localsend/v2", device.ip, device.port);
@@ -1238,6 +1253,9 @@ pub fn send_files(
 
     // 逐文件上传（流式发送，大文件不整体读入内存）
     for (i, id) in ids.iter().enumerate() {
+        if Some(id) == text_id.as_ref() {
+            continue; // 文本最后统一上传
+        }
         let token = tokens.get(id).ok_or("对端未接受该文件")?.clone();
         let mut f = std::fs::File::open(&items[i].0).map_err(|e| format!("打开文件失败：{e}"))?;
         let url = format!("{base}/upload?sessionId={session_id}&fileId={id}&token={token}");
@@ -1254,7 +1272,28 @@ pub fn send_files(
         if let Some(a) = app {
             let _ = a.emit(
                 "qp:send_progress",
-                serde_json::json!({"index": i + 1, "total": items.len(), "file": &items[i].1}),
+                serde_json::json!({"index": i + 1, "total": ids.len(), "file": &items[i].1}),
+            );
+        }
+    }
+    // 文本上传（不落盘，body 为纯文本；与文件同一会话）
+    if let (Some(fid), Some(t)) = (&text_id, text.as_ref()) {
+        let token = tokens.get(fid).ok_or("对端未接受该文本")?.clone();
+        let url = format!("{base}/upload?sessionId={session_id}&fileId={fid}&token={token}");
+        let r = ureq::post(&url)
+            .timeout(Duration::from_secs(60))
+            .send_string(t)
+            .map_err(|e| match e {
+                ureq::Error::Status(code, r) => {
+                    format!("文本发送失败（HTTP {code}: {})", r.into_string().unwrap_or_default())
+                }
+                ureq::Error::Transport(te) => format!("文本发送失败：{te}"),
+            })?;
+        drop(r);
+        if let Some(a) = app {
+            let _ = a.emit(
+                "qp:send_progress",
+                serde_json::json!({"index": ids.len(), "total": ids.len(), "file": "剪贴板.txt"}),
             );
         }
     }
@@ -1309,7 +1348,7 @@ pub fn test_send(app: AppHandle, spec: &str) {
             last_seen: 0,
         };
         std::thread::sleep(std::time::Duration::from_millis(3000)); // 等服务端就绪
-        match send_files(Some(&app), &dev, &paths, None) {
+        match send_files(Some(&app), &dev, &paths, None, None) {
             Ok(()) => log("QP_SEND_TEST 发送成功"),
             Err(e) => log(&format!("QP_SEND_TEST 发送失败: {e}")),
         }
@@ -1389,11 +1428,12 @@ pub fn net_send(
     device: Device,
     paths: Vec<String>,
     names: Option<Vec<String>>,
+    text: Option<String>,
 ) -> Result<(), String> {
     // 后台线程执行实际发送：对端确认（最长 60s）、大文件夹展开、大文件上传都会长时间阻塞，
     // 同步执行会占住窗口消息线程导致"未响应"。命令立即返回，进度/结果通过事件上报。
     std::thread::spawn(move || {
-        if let Err(e) = send_files(Some(&app), &device, &paths, names.as_deref()) {
+        if let Err(e) = send_files(Some(&app), &device, &paths, names.as_deref(), text) {
             let _ = app.emit(
                 "qp:send_error",
                 serde_json::json!({"device": device.alias, "error": e}),

@@ -1080,10 +1080,9 @@ function sendToDevice(id){
     toast(n? '已添加 '+n+' 个文件，请选择目标设备' : '这些文件已在待发送列表');
     return;
   }
-  // text / note → 按文本发送
+  // text / note → 按文本发送（多条文本会在发送时自动合并为一条）
   const t=(d.body||'').trim();
   if(!t) return toast('该内容为空', true);
-  if(SEL.some(s=>s.type==='text')) return toast('已有一份文本待发送，请先发送或清空', true);
   switchPage('file');
   SEL.push({type:'text', content:t, name:(t.length>34? t.slice(0,34)+'…' : t)||'(空文本)', size:d.cat==='note'?'便签':'历史'});
   renderSel();
@@ -1108,7 +1107,7 @@ function sendPickedToDevice(curId){
       });
     } else {
       const t=(d.body||'').trim(); if(!t) return;
-      if(SEL.some(s=>s.type==='text') || textSeen.length) return; // 文本只允许一份
+      if(textSeen.includes(t)) return; // 相同文本去重；多条不同文本发送时自动合并
       textSeen.push(t);
       SEL.push({type:'text', content:t, name:(t.length>34? t.slice(0,34)+'…' : t)||'(空文本)', size:d.cat==='note'?'便签':'历史'});
     }
@@ -1439,25 +1438,19 @@ async function doSendTo(d){
   if(!SEL.length) return false;
   // 新一批发送开始时重置失败标记（仅本批首个触发时）
   if(!window.__pendingSend) window.__pendingSendOk = true;
-  if(SEL.some(s=>s.type==='text')){
-    if(SEL.length!==1){ toast('文本只能单独发送，请先清空选择', true); return false; }
-    window.__pendingSend=(window.__pendingSend||0)+1;
-    showXp(1,1,'文本');
-    try{
-      // 后端命令已改为后台线程执行、立即返回；进度/完成走 qp:send_* 事件
-      await qpInvoke('net_send_text',{device:d.raw, text:SEL[0].content});
-    }catch(e){ window.__pendingSend=Math.max(0,(window.__pendingSend||0)-1); toast('发送失败：'+e, true); hideXp(); return false; }
-  }else{
-    const paths=SEL.map(s=>s.path).filter(Boolean);
-    if(!paths.length){ toast('无法获取所选文件的路径，请重新选择', true); return false; }
-    // names：与 paths 对应的显示名（拖放临时文件的原始名，避免对方收到带时间戳前缀的临时文件名）
-    const names = SEL.map(s=>s.name);
-    window.__pendingSend=(window.__pendingSend||0)+1;
-    showXp(1,paths.length,'发送中');
-    try{
-      await qpInvoke('net_send',{device:d.raw, paths, names});
-    }catch(e){ window.__pendingSend=Math.max(0,(window.__pendingSend||0)-1); toast('发送失败：'+e, true); hideXp(); return false; }
-  }
+  // 文本与文件可混合发送：多条文本合并为一条（分隔线拼接），与文件同一会话传给对端
+  const texts = SEL.filter(s=>s.type==='text').map(s=>s.content).filter(Boolean);
+  const text = texts.length ? texts.join('\n\n────────────────────\n\n') : null;
+  const paths = SEL.filter(s=>s.type!=='text').map(s=>s.path).filter(Boolean);
+  if(!paths.length && !text){ toast('没有可发送的内容，请重新选择', true); return false; }
+  // names：与 paths 对应的显示名（拖放临时文件的原始名，避免对方收到带时间戳前缀的临时文件名）
+  const names = SEL.filter(s=>s.type!=='text').map(s=>s.name);
+  window.__pendingSend=(window.__pendingSend||0)+1;
+  showXp(1, paths.length + (text?1:0), text ? '发送中（含文本）' : '发送中');
+  try{
+    // 后端命令已改为后台线程执行、立即返回；进度/完成走 qp:send_* 事件
+    await qpInvoke('net_send',{device:d.raw, paths, names, text});
+  }catch(e){ window.__pendingSend=Math.max(0,(window.__pendingSend||0)-1); toast('发送失败：'+e, true); hideXp(); return false; }
   return true;
 }
 function showXp(cur,total,label){

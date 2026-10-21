@@ -1,6 +1,6 @@
 [package]
 name = "quickpaste"
-version = "0.2.11"
+version = "0.2.12"
 description = "QuickPaste —— 局域网剪贴板历史与文件互传"
 edition = "2021"
 rust-version = "1.77"
