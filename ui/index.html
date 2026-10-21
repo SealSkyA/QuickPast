@@ -674,10 +674,10 @@ function qpInvoke(cmd, args){ if(QP) return QP.invoke(cmd, args||{}); return Pro
 let DATA = [];
 let catNow = 'all', editMode = false, picked = [];
 let MENUS = {
-  text:['复制','复制格式','收藏','置顶','修改','删除'],
+  text:['复制','复制格式','发送给设备','收藏','置顶','修改','删除'],
   img:['复制','发送给设备','收藏','置顶','修改','删除','另存为'],
-  file:['复制','另存为','收藏','置顶','修改','删除','打开文件位置'],
-  note:['复制','收藏','修改','删除']
+  file:['复制','另存为','发送给设备','收藏','置顶','修改','删除','打开文件位置'],
+  note:['复制','发送给设备','收藏','修改','删除']
 };
 let DEVS = [];  // 附近设备（S3：真实数据由 net_devices / qp:devices 填充；无 Tauri 时用演示数据）
 let sendMode = 'one', sendType = '';
@@ -1018,7 +1018,7 @@ function copyOne(id){
 function cardMenuAction(id, act){
   if(act==='复制') copyOne(id);
   else if(act==='复制格式'){ copyRich(id); }
-  else if(act==='发送给设备'){ sendImage(id); }
+  else if(act==='发送给设备'){ sendToDevice(id); }
   else if(act==='收藏'){ const d=DATA.find(x=>x.id===id); d.fav=true; renderList(); qpInvoke('history_set_fav',{id,fav:true}).catch(()=>{}); toast('已加入收藏'); }
   else if(act==='取消收藏'||act==='删除收藏'){ const d=DATA.find(x=>x.id===id); d.fav=false; renderList(); qpInvoke('history_set_fav',{id,fav:false}).catch(()=>{}); toast('已取消收藏'); }
   else if(act==='置顶') pinOne(id);
@@ -1057,16 +1057,37 @@ function copyRich(id){
     .then(()=>{ const d=DATA.find(x=>x.id===id); qpInvoke('history_mark_last',{id}).catch(()=>{}); toast('已复制'+(d&&d.has_rich?'（含格式）':'（纯文本）')); })
     .catch(()=>toast('复制失败'));
 }
-/* 图片发送：切到发送页并预选该图片快照 */
-function sendImage(id){
-  switchPage('file');
+/* 发送给设备：按类型加入待发送列表（img=图片快照，file=源文件，text/note=文本） */
+function sendToDevice(id){
   const d=DATA.find(x=>x.id===id); if(!d) return;
-  qpInvoke('clip_img_path',{id}).then(p=>{
-    if(!p) return;
-    if(!SEL.find(s=>s.path===p)) SEL.push({type:'file',path:p,name:d.name||'image.png',size:d.size||''});
+  if(d.cat==='img'){
+    switchPage('file');
+    qpInvoke('clip_img_path',{id}).then(p=>{
+      if(!p) return;
+      if(!SEL.find(s=>s.path===p)) SEL.push({type:'file',path:p,name:d.name||'image.png',size:d.size||''});
+      renderSel();
+      toast('已预选图片，请选择目标设备');
+    }).catch(()=>toast('无法发送该图片', true));
+    return;
+  }
+  if(d.cat==='file'){
+    const parts=(d.path||'').split('|').map(s=>s.trim()).filter(Boolean);
+    if(!parts.length) return toast('无法获取文件路径', true);
+    switchPage('file');
+    let n=0;
+    parts.forEach(p=>{ if(!SEL.some(s=>s.path===p)){ SEL.push({type:'file', path:p, name:(p.split(/[\\/]/).pop()||'文件'), size:''}); n++; } });
     renderSel();
-    toast('已预选图片，请选择目标设备');
-  }).catch(()=>toast('无法发送该图片'));
+    toast(n? '已添加 '+n+' 个文件，请选择目标设备' : '这些文件已在待发送列表');
+    return;
+  }
+  // text / note → 按文本发送
+  const t=(d.body||'').trim();
+  if(!t) return toast('该内容为空', true);
+  if(SEL.some(s=>s.type==='text')) return toast('已有一份文本待发送，请先发送或清空', true);
+  switchPage('file');
+  SEL.push({type:'text', content:t, name:(t.length>34? t.slice(0,34)+'…' : t)||'(空文本)', size:d.cat==='note'?'便签':'历史'});
+  renderSel();
+  toast('已加入待发送列表，请选择目标设备');
 }
 let _editId = 0;
 function editItem(id){

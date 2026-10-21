@@ -105,6 +105,8 @@ pub struct Item {
     pub has_rich: Option<bool>, // 剪贴板带 HTML 格式（复制为格式时用）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_copy: Option<bool>, // 最近一次复制的条目（列表图标标记为应用图标黄色）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha: Option<String>, // 图片内容哈希（RGBA sha256），用于同图去重
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -192,6 +194,7 @@ pub fn prune_dups(app: &AppHandle) {
             match (k.cat.as_str(), x.cat.as_str()) {
                 ("text", "text") => x.body.as_deref().map(|b| b.trim()) == k.body.as_deref().map(|b| b.trim()),
                 ("file", "file") => x.path == k.path,
+                ("img", "img") => k.sha.is_some() && k.sha == x.sha,
                 _ => false,
             }
         });
@@ -286,6 +289,14 @@ fn now_iso() -> String {
     Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
+/// RGBA 原始字节的 sha256 十六进制摘要（图片同图去重的指纹）
+fn rgba_sha256(raw: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(raw);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 fn fmt_size(n: u64) -> String {
     if n >= 1 << 30 {
         format!("{:.1} GB", n as f64 / (1 << 30) as f64)
@@ -338,10 +349,15 @@ pub fn spawn_watcher(app: AppHandle) {
         {
             let st = app.state::<History>();
             let mut items = st.items.lock().unwrap();
+            // 图片按内容哈希（RGBA sha256）去重：同一张图（像素一致）不重复记录
+            let img_sha = match &key {
+                ClipKey::Img(raw) => Some(rgba_sha256(raw)),
+                _ => None,
+            };
             let same = |x: &Item| match &key {
                 ClipKey::Text(t) => x.cat == "text" && x.body.as_deref().map(|b| b.trim()) == Some(t.trim()),
                 ClipKey::Files(fs) => x.cat == "file" && x.path.as_deref() == Some(&fs.join("|")),
-                ClipKey::Img(_) => false,
+                ClipKey::Img(_) => img_sha.is_some() && x.cat == "img" && x.sha.as_deref().is_some() && x.sha == img_sha,
             };
             if let Some(pos) = items.iter().position(&same) {
                 let mut dup = items.remove(pos);
@@ -361,6 +377,7 @@ pub fn spawn_watcher(app: AppHandle) {
                 for rid in &removed {
                     let _ = std::fs::remove_file(text_dir(&app).join(format!("{rid}.txt")));
                     let _ = std::fs::remove_file(text_dir(&app).join(format!("{rid}.html")));
+                    let _ = std::fs::remove_file(img_dir(&app).join(format!("{rid}.png")));
                 }
                 save_items(&app, &st.items.lock().unwrap());
                 mark_last_copy(&app, dup.id);
@@ -437,7 +454,7 @@ fn poll_once(
             .to_rgba8()
             .map(|r| r.as_raw().clone())
             .unwrap_or_default();
-        let key = ClipKey::Img(raw);
+        let key = ClipKey::Img(raw.clone());
         let size = (w * h * 4) as u64;
         let name = format!("截图_{}.png", Local::now().format("%Y%m%d_%H%M%S"));
         return Some((
@@ -447,6 +464,7 @@ fn poll_once(
                 name: Some(name),
                 res: Some(format!("{w} × {h}")),
                 size: Some(fmt_size(size)),
+                sha: Some(rgba_sha256(&raw)),
                 ..Default::default()
             },
             Some(img),
@@ -698,6 +716,7 @@ pub fn history_add_note(app: AppHandle, body: String) -> Result<serde_json::Valu
         pin: None,
         has_rich: None,
         last_copy: None,
+        sha: None,
     };
     write_text(&app, it.id, &body);
     items.insert(0, it.clone());
