@@ -551,23 +551,8 @@ fn handle_prepare_upload(app: AppHandle, mut req: tiny_http::Request) {
         st.sessions.lock().unwrap().insert(session_id.clone(), session);
     }
 
-    // 通知前端弹确认
-    let incoming = serde_json::json!({
-        "sessionId": session_id,
-        "senderAlias": sender_alias.clone(),
-        "senderIp": sender_ip.clone(),
-        "files": files_map.iter().map(|(id, f)| serde_json::json!({
-            "fileId": id,
-            "fileName": f["fileName"],
-            "size": f["size"],
-            "fileType": f["fileType"],
-        })).collect::<Vec<_>>(),
-        "totalSize": total,
-    });
-    let _ = app.emit("qp:incoming", incoming);
-
-    // 测试/无人值守模式：QP_AUTO_ACCEPT=1 或设置 net.autoSave 直接接受（S2 自测 / S3 设置页）
-    // 或发送方在「信任设备」列表（高级设置）→ 免确认自动接收
+    // 静默接收判断：QP_AUTO_ACCEPT=1（自测）、设置 net.autoSave（自动保存）或
+    // 发送方在「信任设备」列表（高级设置）→ 不弹确认窗，直接接收
     let auto = std::env::var("QP_AUTO_ACCEPT").unwrap_or_default();
     let auto_setting = settings_get(&app, "net.autoSave")
         .ok()
@@ -583,10 +568,29 @@ fn handle_prepare_upload(app: AppHandle, mut req: tiny_http::Request) {
         .filter_map(|v| v.as_str().map(|s| s.to_string()))
         .collect::<Vec<_>>();
     let is_trusted = trusted.contains(&sender_fp);
+    let auto_accept = auto == "1" || auto_setting || is_trusted;
+
+    // 仅非静默模式通知前端弹确认窗
+    let incoming = serde_json::json!({
+        "sessionId": session_id,
+        "senderAlias": sender_alias.clone(),
+        "senderIp": sender_ip.clone(),
+        "files": files_map.iter().map(|(id, f)| serde_json::json!({
+            "fileId": id,
+            "fileName": f["fileName"],
+            "size": f["size"],
+            "fileType": f["fileType"],
+        })).collect::<Vec<_>>(),
+        "totalSize": total,
+    });
+    if !auto_accept {
+        let _ = app.emit("qp:incoming", incoming);
+    }
+
     log(&format!(
-        "prepare-upload from {sender_ip}: auto={auto:?} setting={auto_setting} trusted={is_trusted}"
+        "prepare-upload from {sender_ip}: auto={auto:?} setting={auto_setting} trusted={is_trusted} silent={auto_accept}"
     ));
-    if auto == "1" || auto_setting || is_trusted {
+    if auto_accept {
         {
             let st = app.state::<NetState>();
             let mut sess = st.sessions.lock().unwrap();
