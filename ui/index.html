@@ -1089,6 +1089,32 @@ function sendToDevice(id){
   renderSel();
   toast('已加入待发送列表，请选择目标设备');
 }
+/* 批量发送：把批量选中的条目全部加入待发送列表（含右键的当前卡） */
+function sendPickedToDevice(curId){
+  let ids = picked.slice();
+  if(curId && !ids.includes(curId)) ids.push(curId);
+  if(!ids.length) return toast('未选择任何条目', true);
+  switchPage('file');
+  const imgP = [], filSeen = [], textSeen = [];
+  ids.forEach(id=>{
+    const d=DATA.find(x=>x.id===id); if(!d) return;
+    if(d.cat==='img'){
+      imgP.push(qpInvoke('clip_img_path',{id:d.id}).then(p=>{
+        if(p && !SEL.some(s=>s.path===p)) SEL.push({type:'file', path:p, name:d.name||'image.png', size:d.size||''});
+      }).catch(()=>{}));
+    } else if(d.cat==='file'){
+      (d.path||'').split('|').map(s=>s.trim()).filter(Boolean).forEach(p=>{
+        if(!filSeen.includes(p) && !SEL.some(s=>s.path===p)){ filSeen.push(p); SEL.push({type:'file', path:p, name:(p.split(/[\\/]/).pop()||'文件'), size:''}); }
+      });
+    } else {
+      const t=(d.body||'').trim(); if(!t) return;
+      if(SEL.some(s=>s.type==='text') || textSeen.length) return; // 文本只允许一份
+      textSeen.push(t);
+      SEL.push({type:'text', content:t, name:(t.length>34? t.slice(0,34)+'…' : t)||'(空文本)', size:d.cat==='note'?'便签':'历史'});
+    }
+  });
+  Promise.all(imgP).then(()=>{ renderSel(); toast('已加入待发送列表，请选择目标设备'); }).catch(()=>{ renderSel(); toast('已加入待发送列表，请选择目标设备'); });
+}
 let _editId = 0;
 function editItem(id){
   const d=DATA.find(x=>x.id===id); if(!d)return;
@@ -1186,9 +1212,16 @@ function openCardMenu(ev, id){
   ev.stopPropagation();
   const d=DATA.find(x=>x.id===id);
   let ms = (MENUS[d.cat]||[]).slice();
+  if(editMode && picked.length){
+    // 批量（编辑）模式：发送动作作用于所有已选项（含右键的这张卡）
+    ms = ms.map(m=>m==='发送给设备' ? '发送所选项' : m);
+  }
   if(d.fav){ ms = ms.map(m=>m==='收藏'?'取消收藏':m); if(!ms.includes('取消收藏')&&d.cat==='fav') ms=ms.filter(m=>m!=='置顶'&&m!=='修改'); }
   if(d.pin){ ms = ms.map(m=>m==='置顶'?'取消置顶':m); }
-  renderPop(ev.clientX, ev.clientY, ms, (act)=>cardMenuAction(id, act));
+  renderPop(ev.clientX, ev.clientY, ms, (act)=>{
+    if(act==='发送所选项'){ sendPickedToDevice(id); return; }
+    cardMenuAction(id, act);
+  });
 }
 /* 三点菜单（工具栏） */
 function toggleMenu(on){
@@ -1216,7 +1249,7 @@ function renderPop(x, y, acts, onPick){
   document.getElementById('mask').classList.add('on');
 }
 function menuIcon(a){
-  return ({复制:IC.copy,复制格式:'<path d="M8 8h12v12H8z"/><path d="M16 8V4H4v12h4"/><path d="M9 13h6M9 16h4"/>',发送给设备:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v4m0 0l-2-2m2 2l2-2"/>',收藏:IC.star,取消收藏:IC.star,删除收藏:IC.star,置顶:IC.pin,修改:IC.edit,删除:IC.del,另存为:IC.save,"打开文件位置":IC.open,清空所有:IC.del,删除当前项:IC.del,批量选择:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12l2 2 4-4"/>'})[a]||'';
+  return ({复制:IC.copy,复制格式:'<path d="M8 8h12v12H8z"/><path d="M16 8V4H4v12h4"/><path d="M9 13h6M9 16h4"/>',发送给设备:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v4m0 0l-2-2m2 2l2-2"/>',发送所选项:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v4m0 0l-2-2m2 2l2-2"/><path d="M9 3l4-2M9 21v3"/>',收藏:IC.star,取消收藏:IC.star,删除收藏:IC.star,置顶:IC.pin,修改:IC.edit,删除:IC.del,另存为:IC.save,"打开文件位置":IC.open,清空所有:IC.del,删除当前项:IC.del,批量选择:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12l2 2 4-4"/>'})[a]||'';
 }
 function closeAllPopup(){
   const inc = document.getElementById('m-incoming');

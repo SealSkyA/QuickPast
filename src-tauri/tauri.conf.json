@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "QuickPaste",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "identifier": "com.qpaste.quickpaste",
   "build": {
     "frontendDist": "../ui"
@@ -12,7 +12,7 @@
       {
         "label": "main",
         "title": "QuickPaste",
-        "url": "index.html?v=38",
+        "url": "index.html?v=39",
         "width": 860,
         "height": 600,
         "minWidth": 600,
