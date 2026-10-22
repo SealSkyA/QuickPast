@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QuickPaste 手机端 · UI 原型 v0.2.13</title>
+<style>
+/* ===== 新拟物规范 tokens（摘自 UI-风格规范-新拟物.md） ===== */
+:root{
+  --bg:#e9edf2; --card:#e9edf2; --card2:#e9edf2;
+  --lt:#ffffff; --sh:#c0c7d2; --line:#cfd6e0;
+  --fg:#3c4453; --mut:#7f8a9b;
+  --acc:#4d6fa4; --ok:#2f8f6d; --warn:#a5762c; --err:#b3524d;
+  --r:16px;
+  --up:-5px -5px 11px var(--lt), 5px 5px 12px var(--sh);
+  --up-sm:-3px -3px 7px var(--lt), 3px 3px 8px var(--sh);
+  --down:-2px -2px 5px var(--lt), 2px 2px 6px var(--sh);
+  --in:inset -4px -4px 8px var(--lt), inset 4px 4px 9px var(--sh);
+  --in-sm:inset -2px -2px 5px var(--lt), inset 2px 2px 6px var(--sh);
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{
+  background:#dfe4ea;
+  color:var(--fg);
+  font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+  display:flex;align-items:center;justify-content:center;
+  padding:28px 16px;
+}
+svg{display:block}
+button{font:inherit;cursor:pointer}
+
+/* ===== 舞台（桌面观看用的手机外壳） ===== */
+.stage{display:flex;flex-direction:column;align-items:center;gap:14px}
+.stage-top{color:#6b7686;font-size:12.5px;letter-spacing:.4px;text-align:center}
+.stage-top b{color:#3c4453;font-weight:650}
+.phone{
+  width:392px;height:846px;border-radius:44px;background:#cfd6df;
+  box-shadow:14px 18px 34px rgba(83,96,120,.32), -10px -12px 26px #f4f7fb;
+  padding:10px;position:relative;
+}
+.screen{
+  width:100%;height:100%;border-radius:36px;background:var(--bg);overflow:hidden;
+  display:flex;flex-direction:column;position:relative;
+}
+
+/* ===== 手机系统状态栏（示意） ===== */
+.statusbar{
+  flex:0 0 auto;padding:12px 20px 8px;display:flex;align-items:center;justify-content:space-between;
+  color:#7f8a9b;font-size:12px;font-weight:600;letter-spacing:.3px;
+}
+.statusbar svg{stroke:#7f8a9b}
+.sb-r{display:flex;align-items:center;gap:6px}
+.sb-chip{width:20px;height:10px;border-radius:3px;box-shadow:var(--in-sm);position:relative}
+.sb-chip::after{content:"";position:absolute;inset:2.5px;right:9px;border-radius:1.5px;background:var(--ok);opacity:.85}
+
+/* ===== 顶栏 ===== */
+.topbar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:4px 18px 12px}
+.topbar h1{font-size:20px;font-weight:650;letter-spacing:.3px;flex:1;font-variant-numeric:tabular-nums}
+.tb-btn{
+  width:38px;height:38px;border-radius:13px;background:var(--card);
+  box-shadow:var(--up-sm);border:0;display:grid;place-items:center;
+  transition:box-shadow .16s,transform .16s;
+}
+.tb-btn:active{box-shadow:var(--in-sm);transform:translateY(1px)}
+.tb-btn svg{stroke:var(--acc);width:19px;height:19px}
+.pill{
+  display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:999px;
+  background:var(--card);box-shadow:var(--in-sm);font-size:11.5px;font-weight:600;color:var(--ok);
+  cursor:pointer;user-select:none;transition:box-shadow .16s,transform .16s,color .2s;border:0;
+}
+.pill:active{transform:translateY(1px)}
+.pill::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(47,143,109,.16);transition:background .2s}
+.pill.off{color:var(--err)}
+.pill.off::before{background:var(--err);box-shadow:0 0 0 3px rgba(179,82,77,.16)}
+
+/* ===== 历史记录入口（顶栏图标） ===== */
+.recv-title{display:inline-flex;align-items:center;gap:7px;font-size:13.5px;font-weight:650;color:var(--fg);cursor:pointer}
+.recv-title svg{width:16px;height:16px;stroke:var(--acc)}
+.recv-title:active{opacity:.7}
+
+/* ===== 历史记录页顶栏 ===== */
+.hist-top{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:0 18px 12px}
+.hist-top h1{font-size:19px;font-weight:650;flex:1;letter-spacing:.3px;font-variant-numeric:tabular-nums}
+.hist-top .btn{width:auto;padding:8px 13px;font-size:12.5px}
+
+/* ===== 主区滚动 ===== */
+main{flex:1;overflow-y:auto;padding:4px 16px 104px;scrollbar-width:none}
+main::-webkit-scrollbar{display:none}
+
+/* ===== 凸起卡片 ===== */
+.card{
+  background:var(--card);border-radius:var(--r);box-shadow:var(--up);
+  padding:16px;margin-bottom:18px;
+}
+.card-h{display:flex;align-items:center;gap:9px;margin-bottom:4px}
+.card-h svg{stroke:var(--acc);width:16px;height:16px}
+.card-h h2{font-size:14.5px;font-weight:650;letter-spacing:.2px}
+.hint{font-size:12px;color:var(--mut);margin-bottom:12px}
+
+/* ===== 发送大卡 ===== */
+.send{
+  display:flex;align-items:center;gap:14px;padding:20px 18px;border-radius:var(--r);
+  background:var(--card);box-shadow:var(--up);margin-bottom:18px;width:100%;border:0;text-align:left;
+  transition:box-shadow .16s,transform .16s;color:inherit;
+}
+.send:active{box-shadow:var(--in-sm);transform:translateY(1px)}
+.send .ic{
+  width:52px;height:52px;border-radius:16px;background:var(--card);
+  box-shadow:var(--up-sm);display:grid;place-items:center;flex:0 0 auto;
+}
+.send .ic svg{width:24px;height:24px;stroke:var(--acc)}
+.send b{display:block;font-size:15.5px;font-weight:650;letter-spacing:.2px}
+.send span{font-size:12px;color:var(--mut)}
+.send .go{margin-left:auto;width:30px;height:30px;border-radius:50%;box-shadow:var(--in-sm);display:grid;place-items:center}
+.send .go svg{width:13px;height:13px;stroke:var(--mut)}
+
+/* ===== 行（刻痕分隔） ===== */
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;min-height:52px;
+  border-top:1px solid var(--lt);box-shadow:0 1px 0 rgba(192,199,210,.75)}
+.row:first-of-type{border-top:0;box-shadow:none}
+.row-t{font-size:14px;font-weight:600;letter-spacing:.1px}
+.row-s{font-size:11.5px;color:var(--mut);margin-top:1px;font-variant-numeric:tabular-nums}
+.avatar{
+  width:38px;height:38px;border-radius:13px;flex:0 0 auto;display:grid;place-items:center;
+  font-size:15px;font-weight:700;color:var(--fg);
+  background:linear-gradient(135deg, hsl(var(--h) 40% 82%), hsl(var(--h) 30% 70%));
+  box-shadow:var(--up-sm);
+}
+.fico{
+  width:36px;height:36px;border-radius:11px;flex:0 0 auto;display:grid;place-items:center;
+  background:var(--card);box-shadow:var(--up-sm);
+}
+.fico svg{width:17px;height:17px;stroke:var(--acc)}
+.badge{
+  margin-left:auto;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;
+  background:var(--card);box-shadow:var(--in-sm);color:var(--mut);white-space:nowrap;
+}
+.badge.on{color:var(--ok)}
+.badge.off{color:var(--err)}
+.del{
+  width:26px;height:26px;border-radius:9px;background:var(--card);box-shadow:var(--up-sm);
+  border:0;display:grid;place-items:center;transition:box-shadow .16s,transform .16s;
+}
+.del:active{box-shadow:var(--in-sm);transform:translateY(1px)}
+.del svg{width:11px;height:11px;stroke:var(--mut)}
+
+/* ===== 按钮 ===== */
+.btn{
+  background:var(--card2);border:0;border-radius:13px;font-weight:600;color:var(--fg);
+  padding:12px 16px;box-shadow:var(--up-sm);font-size:14px;
+  transition:box-shadow .16s,transform .16s;display:block;width:100%;
+}
+.btn:active{box-shadow:var(--in-sm);transform:translateY(1px)}
+.btn.pri{background:var(--acc);color:#f2f5f9}
+.btn.dan{color:var(--err)}
+.btn:disabled{opacity:.45;box-shadow:none}
+
+/* ===== 底部 TabBar ===== */
+.tabbar{
+  position:absolute;left:0;right:0;bottom:0;height:70px;background:var(--bg);
+  display:grid;grid-template-columns:repeat(3,1fr);padding:6px 14px calc(8px + env(safe-area-inset-bottom));
+  z-index:5;
+}
+.tab{
+  border:0;background:transparent;border-radius:15px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  color:var(--mut);font-size:10.5px;font-weight:600;cursor:pointer;transition:color .18s;
+}
+.tab .tb-ic{width:44px;height:28px;border-radius:999px;display:grid;place-items:center;transition:box-shadow .18s}
+.tab .tb-txt{line-height:1}
+.tab svg{stroke:var(--mut);width:20px;height:20px}
+.tab.on{color:var(--acc)}
+.tab.on .tb-ic{box-shadow:var(--in-sm)}
+.tab.on svg{stroke:var(--acc)}
+
+/* ===== 开关 ===== */
+.sw{display:inline-flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+.sw input{position:absolute;opacity:0}
+.sw i{
+  width:42px;height:24px;border-radius:999px;background:var(--card);
+  box-shadow:var(--in-sm);position:relative;transition:box-shadow .2s;
+}
+.sw i::before{
+  content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
+  background:var(--card);box-shadow:var(--up-sm);transition:transform .22s ease;
+}
+.sw input:checked+i{box-shadow:var(--in-sm),inset 0 0 0 2px rgba(77,111,164,.22)}
+.sw input:checked+i::before{transform:translateX(18px);background:var(--acc)}
+
+select.sel,input[type=number]{background:var(--card2);border:0;border-radius:12px;padding:9px 10px;box-shadow:var(--in-sm);font:inherit;color:var(--fg)}
+select.sel:focus,input[type=number]:focus{outline:none;box-shadow:var(--in)}
+.ctl{display:flex;gap:8px;align-items:center;flex:none}
+
+/* ===== 高级设置折叠（对齐 PC details.adv） ===== */
+details.adv{background:var(--bg);box-shadow:var(--in-sm);border-radius:12px;margin-top:12px;padding:0 12px 4px}
+details.adv summary{cursor:pointer;list-style:none;padding:10px 0;font-size:13px;font-weight:600;color:var(--acc);display:flex;align-items:center;gap:8px}
+details.adv summary::-webkit-details-marker{display:none}
+details.adv[open] summary{border-bottom:1px solid var(--lt);box-shadow:0 1px 0 rgba(192,199,210,.75);margin-bottom:4px}
+
+/* ===== 统一按钮宽度（更多卡） ===== */
+.mbtn{width:76px;padding:8px 0;font-size:12px;text-align:center}
+
+/* ===== KV 格 / 输入 ===== */
+.kvgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.kv{background:var(--bg);box-shadow:var(--in-sm);border-radius:12px;padding:10px 12px}
+.kv em{font-style:normal;font-size:10.5px;color:var(--mut);display:block}
+.kv b{font-size:14.5px;font-weight:700;font-variant-numeric:tabular-nums}
+input[type=text]{
+  background:var(--card2);border:0;border-radius:12px;padding:10px 12px;
+  box-shadow:var(--in-sm);font:inherit;color:var(--fg);width:100%;
+}
+input[type=text]:focus{outline:none;box-shadow:var(--in)}
+
+/* ===== 接收请求卡 ===== */
+.req{background:var(--card);border-radius:var(--r);box-shadow:var(--up);padding:16px;margin-bottom:18px}
+.req .from{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.req .from b{font-size:14.5px}
+.req .from span{font-size:11.5px;color:var(--mut)}
+.req .files{margin:8px 0 14px}
+.req .acts{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.st-inside{display:flex;align-items:center;gap:8px;margin-bottom:14px;
+  background:linear-gradient(90deg, rgba(47,143,109,.14), rgba(47,143,109,0) 62%);
+  padding:8px 10px;border-radius:11px;color:var(--ok);font-size:12.5px;font-weight:600}
+.st-inside svg{width:14px;height:14px;stroke:var(--ok)}
+.pbar{height:8px;border-radius:999px;background:var(--card);box-shadow:var(--in-sm);overflow:hidden}
+.pbar i{display:block;height:100%;width:64%;border-radius:999px;background:linear-gradient(90deg,#4d6fa4,#2f8f6d)}
+
+/* ===== 发送类型（对齐 PC 发送区） ===== */
+.stypes{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}
+.st{
+  background:var(--card);border:0;border-radius:13px;box-shadow:var(--up-sm);
+  display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 4px 10px;
+  font-size:11.5px;font-weight:600;color:var(--fg);
+  transition:box-shadow .16s,transform .16s;width:100%;
+}
+.st:active{box-shadow:var(--in-sm);transform:translateY(1px)}
+.st svg{width:20px;height:20px;stroke:var(--acc)}
+.st.on{box-shadow:var(--in-sm);color:var(--acc)}
+.st.on svg{stroke:var(--acc)}
+
+/* ===== 搜索框（内凹陷，PC 一致） ===== */
+.search-box{display:flex;align-items:center;gap:8px;background:var(--card);box-shadow:var(--in-sm);border-radius:12px;padding:0 11px;margin:2px 0 4px}
+.search-box svg{width:15px;height:15px;stroke:var(--mut);flex:0 0 auto}
+.search-box input{border:0;background:transparent;box-shadow:none;padding:10px 0;font-size:13px}
+.search-box input:focus{box-shadow:none}
+.search-box input::placeholder{color:var(--mut)}
+
+/* ===== 设备卡工具按钮（对齐 PC） ===== */
+.tools{display:flex;gap:8px}
+.tbtn{
+  width:30px;height:30px;border-radius:10px;background:var(--card);box-shadow:var(--up-sm);
+  border:0;display:grid;place-items:center;transition:box-shadow .16s,transform .16s;
+}
+.tbtn:active{box-shadow:var(--in-sm);transform:translateY(1px)}
+.tbtn svg{width:15px;height:15px;stroke:var(--mut)}
+.tbtn.on svg{stroke:var(--acc)}
+
+/* ===== 底部发送栏（对齐 PC devbar） ===== */
+.devbar{display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;
+  border-top:1px solid var(--lt);box-shadow:0 1px 0 rgba(192,199,210,.75);min-height:38px}
+.devbar .cnt{font-size:12px;color:var(--mut);flex:1;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.devbar .btn{padding:7px 14px;width:auto;font-size:12.5px;box-shadow:var(--up-sm)}
+
+/* ===== Toast ===== */
+#toast{
+  position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(14px);
+  background:var(--card);box-shadow:var(--up);color:var(--fg);font-size:13px;font-weight:600;
+  padding:11px 18px;border-radius:999px;opacity:0;pointer-events:none;
+  transition:opacity .25s,transform .25s;z-index:99;white-space:nowrap;
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="stage-top">QuickPaste 手机端 · UI 原型 <b>v0.2.13</b>　·　Flutter / Android / 新拟物　·　与电脑端 LocalSend v2 协议互通</div>
+  <div class="phone"><div class="screen">
+
+    <!-- 状态栏 -->
+    <div class="statusbar">
+      <span>21:06</span>
+      <span class="sb-r">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5a13 13 0 0 1 14 0M9 16a6.5 6.5 0 0 1 6 0"/><circle cx="12" cy="19" r="1" fill="#7f8a9b" stroke="none"/></svg>
+        <i class="sb-chip"></i>
+      </span>
+    </div>
+
+    <!-- 顶栏 -->
+    <div class="topbar">
+      <h1>QuickPaste</h1>
+      <span class="pill" id="pill-online" onclick="toggleOnline(this)" title="点击切换在线状态">在线</span>
+      <span class="recv-title" id="recv-title" onclick="showView('history')" title="历史记录"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2.5"/></svg></span>
+    </div>
+
+    <main>
+      <!-- ============ 发送页 ============ -->
+      <section id="pg-send">
+        <!-- 发送卡：类型选择 + 待发送列表（对齐 PC 发送区） -->
+        <div class="card">
+          <div class="card-h">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>
+            <h2>发送</h2>
+          </div>
+          <div class="hint">先选择发送类型，再勾选附近设备；发送模式决定目标与行为。</div>
+          <div class="stypes">
+            <button class="st on" data-pick="文件"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>文件</button>
+            <button class="st" data-pick="文件夹"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>文件夹</button>
+            <button class="st" data-pick="文本"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4z"/><path d="M9 7h6M9 10.5h4"/></svg>文本</button>
+            <button class="st" data-pick="粘贴板"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a2 2 0 0 1 4 0v1"/></svg>粘贴板</button>
+          </div>
+          <div class="hint" style="margin:11px 2px 0">未选择内容 — 点击上方类型图标挑选要发送的内容</div>
+          <div class="row">
+            <span class="fico"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+            <div><div class="row-t">项目方案-2026.pdf</div><div class="row-s">4.2 MB · 文档</div></div>
+            <button class="del"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+          </div>
+          <div class="row">
+            <span class="fico"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18M4 20V4m5 5 9-9"/></svg></span>
+            <div><div class="row-t">IMG_20241021.jpg</div><div class="row-s">14.2 MB · 图片</div></div>
+            <button class="del"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+          </div>
+        </div>
+
+        <!-- 附近设备卡（对齐 PC） -->
+        <div class="card">
+          <div class="card-h">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5 5l3.5 3.5"/></svg>
+            <h2>附近设备</h2>
+            <span class="tools" style="margin-left:auto">
+              <button class="tbtn" title="多选设备"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12l2 2 4-4"/></svg></button>
+              <button class="tbtn" title="刷新附近设备"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></svg></button>
+              <button class="tbtn" title="只看收藏设备"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/></svg></button>
+              <button class="tbtn" title="发送模式"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.7l6.8-3.4M8.6 13.3l6.8 3.4"/></svg></button>
+            </span>
+          </div>
+          <div class="hint">发送模式：<b style="color:var(--acc)">一个接收者</b> · 发送后自动取消选择</div>
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+            <input placeholder="搜索设备名称 / 系统…">
+          </div>
+          <div class="row" data-tap="device">
+            <div class="avatar" style="--h:212">电</div>
+            <div><div class="row-t">我的电脑</div><div class="row-s">Windows · QuickPaste 0.2.13</div></div>
+            <span class="badge on">在线</span>
+          </div>
+          <div class="row" data-tap="device">
+            <div class="avatar" style="--h:150">组</div>
+            <div><div class="row-t">同事的安卓</div><div class="row-s">Android · LocalSend 1.15</div></div>
+            <span class="badge on">在线</span>
+          </div>
+          <div class="row" data-tap="device">
+            <div class="avatar" style="--h:38">旧</div>
+            <div><div class="row-t">旧平板</div><div class="row-s">Android 11 · 版本过低</div></div>
+            <span class="badge off">离线</span>
+          </div>
+          <div class="devbar">
+            <span class="cnt">已选 1 台设备</span>
+            <button class="btn pri" data-tap="dosend">发送</button>
+            <button class="btn" data-tap="cancel">取消</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 接收页 ============ -->
+      <section id="pg-recv" hidden>
+        <div class="search-box" style="margin:0 0 12px">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input placeholder="搜索请求 / 接收记录…">
+        </div>
+        <div class="req">
+          <div class="st-inside"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8m-4-4 4 4 4-4"/></svg>收到来自「我的电脑」的文件请求</div>
+          <div class="from"><div class="avatar" style="--h:212">电</div><div><b>我的电脑</b><span>Windows · QuickPaste 0.2.13</span></div></div>
+          <div class="files">
+            <div class="row">
+              <span class="fico"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+              <div><div class="row-t">剪贴板.txt</div><div class="row-s">128 B · 文本</div></div>
+            </div>
+            <div class="row">
+              <span class="fico"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5"/><path d="M4 19h16"/></svg></span>
+              <div><div class="row-t">照片-2026.jpg</div><div class="row-s">6.8 MB · 图片</div></div>
+            </div>
+          </div>
+          <div class="acts">
+            <button class="btn pri" data-tap="accept">接受（2 项）</button>
+            <button class="btn dan" data-tap="reject">拒绝</button>
+          </div>
+        </div>
+
+        <div class="req">
+          <div class="st-inside"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8m-4-4 4 4 4-4"/></svg>收到来自「同事的安卓」的文件请求</div>
+          <div class="from"><div class="avatar" style="--h:150">组</div><div><b>同事的安卓</b><span>Android · LocalSend 1.15</span></div></div>
+          <div class="files">
+            <div class="row">
+              <span class="fico"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+              <div><div class="row-t">会议纪要.docx</div><div class="row-s">1.6 MB · 文档</div></div>
+            </div>
+            <div class="row">
+              <span class="fico"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18M4 20V4m5 5 9-9"/></svg></span>
+              <div><div class="row-t">IMG_8821.png</div><div class="row-s">3.1 MB · 图片</div></div>
+            </div>
+          </div>
+          <div class="acts">
+            <button class="btn pri" data-tap="accept">接受（2 项）</button>
+            <button class="btn dan" data-tap="reject">拒绝</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="row">
+            <div class="avatar" style="--h:212">电</div>
+            <div><div class="row-t">演示视频.mp4</div><div class="row-s">来自 我的电脑 · 今天 20:41</div></div>
+            <span class="badge on">已完成</span>
+          </div>
+          <div class="row">
+            <div class="avatar" style="--h:212">电</div>
+            <div><div class="row-t">合同扫描.pdf</div><div class="row-s">来自 我的电脑 · 昨天 15:02</div></div>
+            <span class="badge on">已完成</span>
+          </div>
+          <div class="row">
+            <div class="avatar" style="--h:150">组</div>
+            <div><div class="row-t">通讯录备份.csv</div><div class="row-s">来自 同事的安卓 · 昨天 09:18</div></div>
+            <span class="badge off">已拒绝</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 我的页 ============ -->
+      <section id="pg-me" hidden>
+        <!-- 常规（顶部）：别名 / 服务器 / 界面主题 -->
+        <div class="card">
+          <div class="card-h"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h10M4 12h16M4 18.5h7"/><circle cx="18" cy="5.5" r="2"/><circle cx="13" cy="18.5" r="2"/></svg><h2>常规</h2></div>
+          <div class="row">
+            <div><div class="row-t">别名</div></div>
+            <input type="text" value="我的手机" style="width:118px">
+          </div>
+          <div class="row">
+            <div><div class="row-t">服务器</div></div>
+            <span class="ctl">
+              <select class="sel"><option>在线</option><option>离线</option></select>
+              <button class="btn" style="padding:8px 10px;font-size:12px" data-tap="refresh">刷新</button>
+            </span>
+          </div>
+          <div class="row">
+            <div><div class="row-t">界面主题</div></div>
+            <select class="sel"><option>亮色</option><option>暗色</option><option selected>跟随系统</option></select>
+          </div>
+        </div>
+
+        <!-- 文件传输 -->
+        <div class="card">
+          <div class="card-h"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><h2>文件传输</h2></div>
+          <div class="row">
+            <div><div class="row-t">快速保存</div></div>
+            <label class="sw"><input type="checkbox"><i></i></label>
+          </div>
+          <div class="row">
+            <div><div class="row-t">保存目录</div></div>
+            <span class="ctl">
+              <input type="text" value="/storage/…/Download" style="width:110px;font-size:11px;text-align:left">
+              <button class="btn" style="padding:8px 10px;font-size:12px">选择…</button>
+            </span>
+          </div>
+          <div class="row">
+            <div><div class="row-t">仅通过 Wi-Fi 接收</div></div>
+            <label class="sw"><input type="checkbox"><i></i></label>
+          </div>
+          <div class="row">
+            <div><div class="row-t">震动提示接收</div></div>
+            <label class="sw"><input type="checkbox" checked><i></i></label>
+          </div>
+        </div>
+
+        <!-- 高级设置 -->
+        <div class="card">
+          <div class="card-h"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M18 6h2M16 14h6M4 14h6M10 18h10M6 18h4"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="14" r="2"/><circle cx="8" cy="18" r="2"/></svg><h2>高级设置</h2></div>
+          <details class="adv">
+            <summary>展开高级设置</summary>
+            <div class="row">
+              <div><div class="row-t">监听端口</div></div>
+              <input type="number" value="53318" min="1" max="65535" style="width:96px">
+            </div>
+            <div class="row">
+              <div><div class="row-t">搜索设备超时</div></div>
+              <input type="number" value="25" min="5" max="600" style="width:96px">
+            </div>
+            <div class="row">
+              <div><div class="row-t">缓存</div></div>
+              <span class="ctl">
+                <button class="btn" style="padding:8px 10px;font-size:12px">打开目录</button>
+                <button class="btn" style="padding:8px 10px;font-size:12px">清空缓存</button>
+              </span>
+            </div>
+          </details>
+        </div>
+
+        <!-- 更多 -->
+        <div class="card">
+          <div class="card-h"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg><h2>更多</h2></div>
+          <div class="row">
+            <div><div class="row-t">关于</div></div>
+            <button class="btn mbtn" data-tap="about">打开</button>
+          </div>
+          <div class="row">
+            <div><div class="row-t">支持 QuickPaste</div></div>
+            <button class="btn mbtn" data-tap="donate">捐赠</button>
+          </div>
+          <div class="row">
+            <div><div class="row-t">检查更新</div></div>
+            <button class="btn mbtn" data-tap="checkupd">检测</button>
+          </div>
+          <div class="row">
+            <div><div class="row-t">更新日志</div></div>
+            <button class="btn mbtn" data-tap="changelog">0.2.13</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 历史记录页 ============ -->
+      <section id="pg-history" hidden>
+        <div class="hist-top">
+          <button class="tb-btn" onclick="showView('recv')" title="返回"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+          <h1>历史记录</h1>
+          <button class="btn pri" data-tap="opendir">打开目录</button>
+          <button class="btn dan" data-tap="delhist">删除历史</button>
+        </div>
+        <div class="search-box" style="margin:0 0 12px">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input placeholder="搜索历史记录…">
+        </div>
+        <div class="card">
+          <div class="row">
+            <div class="avatar" style="--h:212">电</div>
+            <div><div class="row-t">演示视频.mp4</div><div class="row-s">来自 我的电脑 · 今天 20:41</div></div>
+            <span class="badge on">已完成</span>
+          </div>
+          <div class="row">
+            <div class="avatar" style="--h:212">电</div>
+            <div><div class="row-t">合同扫描.pdf</div><div class="row-s">来自 我的电脑 · 昨天 15:02</div></div>
+            <span class="badge on">已完成</span>
+          </div>
+          <div class="row">
+            <div class="avatar" style="--h:150">组</div>
+            <div><div class="row-t">通讯录备份.csv</div><div class="row-s">来自 同事的安卓 · 昨天 09:18</div></div>
+            <span class="badge off">已拒绝</span>
+          </div>
+          <div class="row">
+            <div class="avatar" style="--h:265">我</div>
+            <div><div class="row-t">照片-2027-01.jpg</div><div class="row-s">发往 我的电脑 · 10-20 19:12</div></div>
+            <span class="badge" style="color:var(--ok)">已发送</span>
+          </div>
+          <div class="row">
+            <div class="avatar" style="--h:265">我</div>
+            <div><div class="row-t">需求文档.docx</div><div class="row-s">发往 我的电脑 · 10-20 16:33</div></div>
+            <span class="badge" style="color:var(--ok)">已发送</span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- 底部 Tab 导航 -->
+    <nav class="tabbar" id="tabbar">
+      <button class="tab on" data-tab="recv"><span class="tb-ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg></span><span class="tb-txt">接收</span></button>
+      <button class="tab" data-tab="send"><span class="tb-ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg></span><span class="tb-txt">发送</span></button>
+      <button class="tab" data-tab="me"><span class="tb-ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg></span><span class="tb-txt">我的</span></button>
+    </nav>
+
+  </div></div>
+</div>
+<div id="toast"></div>
+
+<script>
+var toastTimer;
+function toast(msg){
+  var t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.classList.remove('show'); }, 1600);
+}
+function showView(name){
+  document.getElementById('pg-send').hidden = name !== 'send';
+  document.getElementById('pg-recv').hidden = name !== 'recv';
+  document.getElementById('pg-me').hidden  = name !== 'me';
+  document.getElementById('pg-history').hidden = name !== 'history';
+  document.getElementById('tabbar').style.display = name === 'history' ? 'none' : 'grid';
+  document.querySelectorAll('.tab').forEach(function(b){ b.classList.toggle('on', b.dataset.tab === name); });
+}
+function switchTab(name){ showView(name); }
+document.querySelectorAll('.tab').forEach(function(b){
+  b.addEventListener('click', function(){ switchTab(b.dataset.tab); });
+});
+function toggleOnline(pill){
+  var off = pill.classList.toggle('off');
+  pill.textContent = off ? '离线' : '在线';
+}
+document.querySelectorAll('.st').forEach(function(b){
+  b.addEventListener('click', function(){
+    document.querySelectorAll('.st').forEach(function(x){ x.classList.remove('on'); });
+    b.classList.add('on');
+    toast('选择「' + b.getAttribute('data-pick') + '」→ 实施阶段调起系统选择器');
+  });
+});
+document.querySelectorAll('.tbtn').forEach(function(b){
+  b.addEventListener('click', function(){ b.classList.toggle('on'); toast('实施阶段：' + b.title); });
+});
+document.querySelectorAll('[data-tap]').forEach(function(el){
+  el.addEventListener('click', function(){
+    var k = el.getAttribute('data-tap');
+    if (k === 'device') toast('点击设备 → 实施阶段发起发送');
+    if (k === 'accept') toast('实施阶段：开始接收文件');
+    if (k === 'reject') toast('已拒绝');
+    if (k === 'dosend') toast('实施阶段：发送给选中设备');
+    if (k === 'cancel') toast('已取消选择');
+    if (k === 'opendir') toast('实施阶段：打开接收目录');
+    if (k === 'delhist') toast('实施阶段：清除全部历史记录');
+    if (k === 'refresh') toast('实施阶段：重新扫描附近设备');
+    if (k === 'about') toast('实施阶段：打开关于页');
+    if (k === 'donate') toast('实施阶段：打赏支持');
+    if (k === 'checkupd') toast('实施阶段：检测最新版本');
+    if (k === 'changelog') toast('实施阶段：查看更新日志');
+  });
+});
+switchTab('recv');
+</script>
+</body>
+</html>
