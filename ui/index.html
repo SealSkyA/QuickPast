@@ -704,6 +704,16 @@ function switchPage(p){
   if(p==='file'){ document.getElementById('wPin').classList.add('on'); probeDevices(); }
   else if(!editMode){ document.getElementById('wPin').classList.remove('on'); }
 }
+/* 跳到「文件传输-发送」子页：右键发送内容后直达发送页，并滚动让待发列表可见 */
+function goSendView(){
+  switchPage('file');
+  const sendRail = document.querySelector('#rail-file .rail-item[data-x="send"]');
+  if(sendRail && !sendRail.classList.contains('on')) switchX(sendRail);
+  requestAnimationFrame(()=>{
+    const sc = document.querySelector('#pg-file .main');
+    if(sc && sc.scrollTo) sc.scrollTo({top:0, behavior:'smooth'});
+  });
+}
 /* 探查设备：进入发送页自动触发一次组播发现；雷达图标旋转表示进行中 */
 function probeDevices(){
   const r=document.getElementById('radarIco'); if(r) r.classList.add('spin');
@@ -1061,29 +1071,29 @@ function copyRich(id){
 function sendToDevice(id){
   const d=DATA.find(x=>x.id===id); if(!d) return;
   if(d.cat==='img'){
-    switchPage('file');
+    goSendView();
     qpInvoke('clip_img_path',{id}).then(p=>{
       if(!p) return;
       if(!SEL.find(s=>s.path===p)) SEL.push({type:'file',path:p,name:d.name||'image.png',size:d.size||''});
       renderSel();
-      toast('已预选图片，请选择目标设备');
+      toast('已预选图片，勾选设备后点「发送」');
     }).catch(()=>toast('无法发送该图片', true));
     return;
   }
   if(d.cat==='file'){
     const parts=(d.path||'').split('|').map(s=>s.trim()).filter(Boolean);
     if(!parts.length) return toast('无法获取文件路径', true);
-    switchPage('file');
+    goSendView();
     let n=0;
     parts.forEach(p=>{ if(!SEL.some(s=>s.path===p)){ SEL.push({type:'file', path:p, name:(p.split(/[\\/]/).pop()||'文件'), size:''}); n++; } });
     renderSel();
-    toast(n? '已添加 '+n+' 个文件，请选择目标设备' : '这些文件已在待发送列表');
+    toast(n? '已添加 '+n+' 个文件，勾选设备后点「发送」' : '这些文件已在待发送列表');
     return;
   }
   // text / note → 按文本发送（多条文本会在发送时自动合并为一条）
   const t=(d.body||'').trim();
   if(!t) return toast('该内容为空', true);
-  switchPage('file');
+  goSendView();
   SEL.push({type:'text', content:t, name:(t.length>34? t.slice(0,34)+'…' : t)||'(空文本)', size:d.cat==='note'?'便签':'历史'});
   renderSel();
   toast('已加入待发送列表，请选择目标设备');
@@ -1093,7 +1103,7 @@ function sendPickedToDevice(curId){
   let ids = picked.slice();
   if(curId && !ids.includes(curId)) ids.push(curId);
   if(!ids.length) return toast('未选择任何条目', true);
-  switchPage('file');
+  goSendView();
   const imgP = [], filSeen = [], textSeen = [];
   ids.forEach(id=>{
     const d=DATA.find(x=>x.id===id); if(!d) return;
@@ -1112,7 +1122,7 @@ function sendPickedToDevice(curId){
       SEL.push({type:'text', content:t, name:(t.length>34? t.slice(0,34)+'…' : t)||'(空文本)', size:d.cat==='note'?'便签':'历史'});
     }
   });
-  Promise.all(imgP).then(()=>{ renderSel(); toast('已加入待发送列表，请选择目标设备'); }).catch(()=>{ renderSel(); toast('已加入待发送列表，请选择目标设备'); });
+  Promise.all(imgP).then(()=>{ renderSel(); toast('已加入待发送列表，勾选设备后点「发送」'); }).catch(()=>{ renderSel(); toast('已加入待发送列表，勾选设备后点「发送」'); });
 }
 let _editId = 0;
 function editItem(id){
@@ -1470,7 +1480,7 @@ function handleDroppedPaths(paths){
     if(!SEL.some(s=>s.path===p)){ SEL.push({type:'file', path:p, name:name, size:''}); n++; }
   });
   if(!n) return 0;
-  renderSel(); switchPage('file');
+  renderSel(); goSendView();
   if(typeof toast === 'function') toast('已添加 '+n+' 个文件/文件夹，选择目标设备后发送');
   return n;
 }
