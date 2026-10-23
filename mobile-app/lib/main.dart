@@ -70,11 +70,30 @@ class QuickCopyApp extends StatefulWidget {
 
 class _QuickCopyAppState extends State<QuickCopyApp> {
   ThemeMode _mode = ThemeMode.system;
+  AppLifecycleListener? _life;
 
   @override
   void initState() {
     super.initState();
     _loadTheme();
+    _loadFavs();
+    final svc = LocalSendService.instance;
+    svc.acquireMulticast(); // 组播锁：不获取则收不到局域网设备广播
+    // 后台恢复：重新获取组播锁 + 重建发现通道（后台期间 socket/成员关系可能失效）
+    _life = AppLifecycleListener(onResume: () {
+      svc.acquireMulticast();
+      svc.refresh();
+    });
+  }
+
+  @override
+  void dispose() {
+    _life?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadFavs() async {
+    await LocalSendService.instance.loadFavs();
   }
 
   /// 读取持久化的主题模式并应用（更新全局 token + MaterialApp.themeMode）

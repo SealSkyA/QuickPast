@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import '../history_store.dart';
 import '../models.dart';
 import '../net/localsend.dart';
+import '../open_dir.dart';
 import '../theme.dart';
 import '../widgets/neumorph.dart';
 
@@ -105,9 +106,6 @@ class _HistoryPageState extends State<HistoryPage> {
   Future<void> _openDir() async {
     final svc = LocalSendService.instance;
     var dir = svc.saveDir;
-    if (dir.isEmpty) {
-      dir = LocalSendService.instance.saveDir;
-    }
     if (dir.isEmpty || !Directory(dir).existsSync()) {
       // 默认外部目录
       final ext = await getExternalStorageDirectory();
@@ -118,7 +116,12 @@ class _HistoryPageState extends State<HistoryPage> {
         dir = ext?.path ?? '';
       }
     }
-    Toast.show(context, dir.isEmpty ? '尚未设置保存目录' : '保存目录\n$dir');
+    if (dir.isEmpty || !Directory(dir).existsSync()) {
+      Toast.show(context, '尚未设置保存目录');
+      return;
+    }
+    final ok = await openDirInFiles(dir);
+    if (!ok && mounted) Toast.show(context, '打开目录失败\n可在文件管理器访问：\n$dir');
   }
 
   void _clear() {

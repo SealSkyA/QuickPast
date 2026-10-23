@@ -22,6 +22,7 @@ class _SendPageState extends State<SendPage> {
   final List<SendItem> _pending = [];
   final Set<String> _checked = {}; // fingerprint
   bool _onlyDownload = false;
+  bool _onlyFav = false;
   final _searchCtrl = TextEditingController();
   String _q = '';
 
@@ -153,6 +154,11 @@ class _SendPageState extends State<SendPage> {
     });
   }
 
+  void _toggleFav(String fp) {
+    _svc.toggleFav(fp);
+    setState(() {});
+  }
+
   Future<void> _sendAll() async {
     if (_pending.isEmpty) {
       Toast.show(context, '先在上方选择要发送的内容');
@@ -238,7 +244,12 @@ class _SendPageState extends State<SendPage> {
                     Expanded(child: Text('附近设备', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: kFg))),
                     _tool(Icons.check_box_outlined, '全选/清空', _toggleAll),
                     const SizedBox(width: 2),
-                    _tool(Icons.refresh_rounded, '刷新扫描', () => _svc.refresh()),
+                    _tool(
+                      _onlyFav ? Icons.star_rounded : Icons.star_border_rounded,
+                      _onlyFav ? '收起只看收藏' : '只看收藏设备',
+                      () => setState(() => _onlyFav = !_onlyFav),
+                      color: _onlyFav ? kAcc : kMut,
+                    ),
                     const SizedBox(width: 2),
                     _tool(Icons.phonelink_rounded, '仅看可接收设备', () => setState(() => _onlyDownload = !_onlyDownload)),
                     const SizedBox(width: 2),
@@ -262,6 +273,7 @@ class _SendPageState extends State<SendPage> {
                   valueListenable: _svc.devices,
                   builder: (_, devs, __) {
                     final list = devs
+                        .where((d) => !_onlyFav || _svc.isFav(d.fingerprint))
                         .where((d) => _onlyDownload ? (d.download || d.deviceType == 'mobile') : true)
                         .where((d) => _q.isEmpty || d.alias.toLowerCase().contains(_q) || d.deviceType.toLowerCase().contains(_q))
                         .toList();
@@ -272,9 +284,9 @@ class _SendPageState extends State<SendPage> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.wifi_tethering, size: 34, color: kMut),
+                            Icon(_onlyFav ? Icons.star_border_rounded : Icons.wifi_tethering, size: 34, color: kMut),
                             SizedBox(height: 8),
-                            Text('未发现附近设备\n请确认对方已开启 QuickCopy',
+                            Text(_onlyFav ? '没有收藏的设备\n可在设备右侧点星标收藏' : '未发现附近设备\n请确认对方已开启 QuickCopy',
                                 textAlign: TextAlign.center, style: TextStyle(fontSize: 12.5, color: kMut, height: 1.6)),
                           ],
                         ),
@@ -411,6 +423,17 @@ class _SendPageState extends State<SendPage> {
               child: Text(online ? '在线' : '离线',
                   style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: online ? kOk : kErr)),
             ),
+            const SizedBox(width: 10),
+            // 收藏星标（点星标收藏/取消收藏，不勾选设备）
+            GestureDetector(
+              onTap: () => _toggleFav(d.fingerprint),
+              behavior: HitTestBehavior.opaque,
+              child: Icon(
+                _svc.isFav(d.fingerprint) ? Icons.star_rounded : Icons.star_border_rounded,
+                size: 22,
+                color: _svc.isFav(d.fingerprint) ? kWarn : kMut.withValues(alpha: .75),
+              ),
+            ),
             const SizedBox(width: 12),
             // 勾选圆点
             AnimatedContainer(
@@ -433,10 +456,10 @@ class _SendPageState extends State<SendPage> {
     );
   }
 
-  Widget _tool(IconData icon, String tip, VoidCallback onTap) {
+  Widget _tool(IconData icon, String tip, VoidCallback onTap, {Color? color}) {
     return Tooltip(
       message: tip,
-      child: NeoIconBtn(icon, size: 32, radius: 10, color: kMut, onTap: onTap),
+      child: NeoIconBtn(icon, size: 32, radius: 10, color: color ?? kMut, onTap: onTap),
     );
   }
 }

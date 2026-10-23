@@ -438,11 +438,7 @@ class _NeoSelectState extends State<NeoSelect> {
               child: Container(
                 width: widget.width,
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                decoration: i == 0
-                    ? null
-                    : BoxDecoration(
-                        border: Border(top: BorderSide(color: kLine, width: 1)),
-                      ),
+                // 选项间不加分隔线：浅色/暖屏上 kLine 灰线观感偏黄（用户多次反馈）
                 child: Text(
                   widget.options[i],
                   style: TextStyle(

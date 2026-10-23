@@ -8,7 +8,9 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models.dart';
 
@@ -37,6 +39,29 @@ class LocalSendService extends ChangeNotifier {
   bool vibrate = true;
   bool autoAccept = false;
 
+  // ── 收藏的设备（按 fingerprint 持久化，重启保留）──
+  final ValueNotifier<Set<String>> favs = ValueNotifier({});
+
+  bool isFav(String fp) => favs.value.contains(fp);
+
+  Future<void> loadFavs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('favFps') ?? const [];
+      favs.value = list.toSet();
+    } catch (_) {}
+  }
+
+  Future<void> toggleFav(String fp) async {
+    final s = Set<String>.from(favs.value);
+    if (!s.add(fp)) s.remove(fp);
+    favs.value = s;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('favFps', s.toList());
+    } catch (_) {}
+  }
+
   // ── 状态 ──
   final ValueNotifier<List<Device>> devices = ValueNotifier<List<Device>>([]);
   /// 待确认的接收请求队列（UI 顶部展示，逐个确认）
@@ -52,6 +77,7 @@ class LocalSendService extends ChangeNotifier {
   final ValueNotifier<Map<String, dynamic>?> sendProgress = ValueNotifier(null);
 
   RawDatagramSocket? _udp;
+  Timer? _announceTimer;
   final Map<String, Completer<bool>> _confirms = {}; // sessionId → 用户决定
 
   bool _started = false;
@@ -96,6 +122,8 @@ class LocalSendService extends ChangeNotifier {
   }
 
   Future<void> _startUdp() async {
+    _announceTimer?.cancel();
+    _announceTimer = null;
     final sock = await RawDatagramSocket.bind(InternetAddress.anyIPv4, kPort);
     try {
       sock.joinMulticast(InternetAddress(kMcAddr));
@@ -114,18 +142,22 @@ class LocalSendService extends ChangeNotifier {
     _sendAnnounce();
     _sendAnnounce();
     _sendAnnounce();
-    Timer.periodic(kAnnounceInterval, (_) {
+    _announceTimer = Timer.periodic(kAnnounceInterval, (_) {
       if (online) _sendAnnounce();
       _prune();
     });
   }
 
-  void _sendAnnounce() {
+  void _sendAnnounce([InternetAddress? target, int? port]) {
     final s = _udp;
     if (s == null || !online) return;
-    final msg = jsonEncode({...myInfo, 'announce': true});
+    final msg = utf8.encode(jsonEncode({...myInfo, 'announce': true}));
     try {
-      s.send(utf8.encode(msg), InternetAddress(kMcAddr), kPort);
+      if (target != null && port != null) {
+        s.send(msg, target, port); // 单播唤醒对端
+      } else {
+        s.send(msg, InternetAddress(kMcAddr), kPort);
+      }
     } catch (_) {}
   }
 
@@ -166,9 +198,35 @@ class LocalSendService extends ChangeNotifier {
     if (list.length != before) devices.value = list;
   }
 
-  /// 手动广播一轮（刷新/改名后）
-  void refresh() {
-    _sendAnnounce();
+  /// 手动刷新（发送页/我的页按钮 + 前台恢复）：重建发现通道（后台期间
+  /// socket/组播成员关系可能失效）+ 广播自己 + 单播唤醒已知设备回执。
+  Future<void> refresh() async {
+    final old = _udp;
+    _udp = null;
+    try {
+      old?.close();
+    } catch (_) {}
+    try {
+      await _startUdp();
+    } catch (e) {
+      debugPrint('refresh rebind: $e');
+      return;
+    }
+    // 组播收不到时，逐个单播已知设备（对端会回 register 恢复列表）
+    for (final d in List.of(devices.value)) {
+      _sendAnnounce(InternetAddress(d.ip), d.port);
+    }
+  }
+
+  /// Android 组播锁：不获取 MulticastLock 时系统默认丢弃组播报文，
+  /// 表现为「首次能发现、后台回来搜不到」。锁在后台可能被系统释放，
+  /// 前台恢复时应重新获取。
+  static const MethodChannel _wifiChannel = MethodChannel('qp_wifi');
+
+  Future<void> acquireMulticast() async {
+    try {
+      await _wifiChannel.invokeMethod('acquireMulticast');
+    } catch (_) {}
   }
 
   /* ────────────── HTTP 服务（接收端） ────────────── */

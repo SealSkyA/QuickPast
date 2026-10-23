@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 路径映射：覆盖保存目录可能出现的所有位置 -->
+<paths>
+    <!-- 默认保存目录 Download/QuickCopy（外部存储根） -->
+    <external-path name="external" path="."/>
+    <!-- 降级目录：App 专属外部目录（getExternalStorageDirectory/QuickCopy） -->
+    <external-files-path name="extfiles" path="."/>
+    <!-- 兜底目录：systemTemp（/data/user/0/包名/cache） -->
+    <cache-path name="cache" path="."/>
+</paths>

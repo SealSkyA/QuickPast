@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../net/localsend.dart';
+import '../open_dir.dart';
 import '../theme.dart';
 import '../widgets/neumorph.dart';
 
@@ -285,13 +286,14 @@ class _MePageState extends State<MePage> {
     );
   }
 
-  void _openCacheDir() {
+  void _openCacheDir() async {
     final dir = _svc.saveDir;
     if (dir.isEmpty || !Directory(dir).existsSync()) {
       Toast.show(context, '保存目录不存在');
       return;
     }
-    Process.start('explorer', [dir]);
+    final ok = await openDirInFiles(dir);
+    if (!ok && mounted) Toast.show(context, '打开失败');
   }
 
   void _clearCache() async {
@@ -439,7 +441,7 @@ class _MePageState extends State<MePage> {
             children: [
               const Text('更新日志', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
               const SizedBox(height: 10),
-              Text('v0.2.15 · 品牌更名 QuickCopy、图标改色、支持在线检查更新\nv0.2.13 · 手机端初版，支持收发文件与文本',
+              Text('v0.2.17 · 后台恢复自动重连发现；设备收藏；打开目录直达文件管理；菜单黄线修复\nv0.2.16 · 在线检查更新、下拉菜单不再被遮挡、界面主题可切换\nv0.2.15 · 品牌更名 QuickCopy、图标改色\nv0.2.13 · 手机端初版，支持收发文件与文本',
                   style: TextStyle(fontSize: 12.5, color: kMut, height: 1.7)),
             ],
           ),
