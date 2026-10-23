@@ -36,7 +36,7 @@ jobs:
         run: npm ci
 
       - name: 构建 deb（arm64）
-        run: npx tauri build -- --bundles deb
+        run: npx tauri build --bundles deb
 
       - name: 汇总产物
         run: |
