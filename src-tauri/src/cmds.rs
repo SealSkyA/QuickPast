@@ -84,38 +84,64 @@ pub fn qp_window_hide(app: AppHandle) -> Result<(), String> {
     win.hide().map_err(|e| e.to_string())
 }
 
-/// 开机自启开关：写入设置并立即生效（Windows 注册表 Run 键）。
+/// 开机自启开关：写入设置并立即生效。Windows 写注册表 Run 键；Linux（麒麟/UOS）写
+/// XDG autostart 的 .desktop（~/.config/autostart/），两个发行版都遵循标准。
 /// 自启启动附带 --hidden 参数 → 开机时静默运行（托盘常驻）；手动双击启动仍正常显示窗口。
 #[tauri::command]
 pub fn qp_set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
-    if on {
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let cmd = format!("\"{}\" --hidden", exe.to_string_lossy());
-        let out = std::process::Command::new("reg")
-            .args([
-                "add",
-                "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                "/v",
-                "QuickCopy",
-                "/d",
-                &cmd,
-                "/f",
-            ])
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !out.status.success() {
-            return Err("写入开机自启注册表失败".to_string());
+    #[cfg(windows)]
+    {
+        if on {
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            let cmd = format!("\"{}\" --hidden", exe.to_string_lossy());
+            let out = std::process::Command::new("reg")
+                .args([
+                    "add",
+                    "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                    "/v",
+                    "QuickCopy",
+                    "/d",
+                    &cmd,
+                    "/f",
+                ])
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                return Err("写入开机自启注册表失败".to_string());
+            }
+        } else {
+            let _ = std::process::Command::new("reg")
+                .args([
+                    "delete",
+                    "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                    "/v",
+                    "QuickCopy",
+                    "/f",
+                ])
+                .output();
         }
-    } else {
-        let _ = std::process::Command::new("reg")
-            .args([
-                "delete",
-                "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                "/v",
-                "QuickCopy",
-                "/f",
-            ])
-            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        let dir = std::path::PathBuf::from(
+            std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()),
+        )
+        .join(".config/autostart");
+        let file = dir.join("QuickCopy.desktop");
+        if on {
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(&dir).map_err(|e| format!("创建自启目录失败：{e}"))?;
+            std::fs::write(
+                &file,
+                format!(
+                    "[Desktop Entry]\nType=Application\nName=QuickCopy\nExec=\"{}\" --hidden\nComment=局域网剪贴板历史与文件互传\n",
+                    exe.to_string_lossy()
+                ),
+            )
+            .map_err(|e| format!("写自启文件失败：{e}"))?;
+        } else {
+            let _ = std::fs::remove_file(&file);
+        }
     }
     settings::set_key(&app, "autostart", Value::Bool(on)).map_err(|e| e.to_string())
 }
@@ -197,16 +223,28 @@ fn cmp_version(a: &str, b: &str) -> i32 {
     0
 }
 
-// 静默子进程标志：不弹终端/控制台窗口（CREATE_NO_WINDOW）
+// 静默子进程标志：不弹终端/控制台窗口（CREATE_NO_WINDOW；仅 Windows）
+#[cfg(windows)]
 const NO_WINDOW: u32 = 0x08000000;
+
+/// 构造不弹终端窗口的子进程命令（Windows 加 creation_flags；Linux 无需处理）。
+#[cfg(windows)]
+fn silent_cmd(prog: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut c = std::process::Command::new(prog);
+    c.creation_flags(NO_WINDOW);
+    c
+}
+#[cfg(not(windows))]
+fn silent_cmd(prog: &str) -> std::process::Command {
+    std::process::Command::new(prog)
+}
 
 /// 在线更新：读取 GitHub Releases 最新版本（系统 curl 静默请求，不弹终端框）。
 /// 顺带取回安装包资产地址，供 qp_download_update 在线下载。
 #[tauri::command]
 pub fn qp_check_update() -> Result<serde_json::Value, String> {
-    use std::os::windows::process::CommandExt;
-    let out = std::process::Command::new("curl")
-        .creation_flags(NO_WINDOW)
+    let out = silent_cmd("curl")
         .args(["-fs", "--max-time", "12", "-H", "Accept: application/vnd.github+json", "-H", "User-Agent: QuickCopy"])
         .arg("https://api.github.com/repos/SealSkyA/QuickPast/releases/latest")
         .output()
@@ -219,7 +257,7 @@ pub fn qp_check_update() -> Result<serde_json::Value, String> {
     let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("解析更新信息失败：{e}"))?;
     let tag = v.get("tag_name").and_then(|t| t.as_str()).unwrap_or("").to_string();
     let latest = tag.trim_start_matches('v').to_string();
-    // 优先选安装包资产（.exe / .msi）
+    // 优先选安装包资产：Windows 找 .exe/.msi；Linux（麒麟/UOS）找 .deb
     let mut asset_name = String::new();
     let mut asset_url = String::new();
     let mut asset_size: u64 = 0;
@@ -227,7 +265,16 @@ pub fn qp_check_update() -> Result<serde_json::Value, String> {
         for a in arr {
             let name = a.get("name").and_then(|n| n.as_str()).unwrap_or("");
             let url = a.get("browser_download_url").and_then(|u| u.as_str()).unwrap_or("");
-            if (name.ends_with(".exe") || name.ends_with(".msi")) && !url.is_empty() {
+            let hit;
+            #[cfg(windows)]
+            {
+                hit = (name.ends_with(".exe") || name.ends_with(".msi")) && !url.is_empty();
+            }
+            #[cfg(not(windows))]
+            {
+                hit = name.ends_with(".deb") && !url.is_empty();
+            }
+            if hit {
                 asset_name = name.to_string();
                 asset_url = url.to_string();
                 asset_size = a.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
@@ -341,7 +388,6 @@ const GH_MIRRORS: [&str; 4] = [
 ];
 
 fn do_download(url: &str, path: &std::path::Path) -> Result<String, String> {
-    use std::os::windows::process::CommandExt;
     let tmp = path.with_extension("part");
     let mut candidates: Vec<String> = Vec::with_capacity(1 + GH_MIRRORS.len());
     candidates.push(url.to_string());
@@ -350,8 +396,7 @@ fn do_download(url: &str, path: &std::path::Path) -> Result<String, String> {
     }
     for cand in &candidates {
         let _ = std::fs::remove_file(&tmp);
-        let out = std::process::Command::new("curl")
-            .creation_flags(NO_WINDOW)
+        let out = silent_cmd("curl")
             .args(["-Lfs", "--connect-timeout", "8", "--max-time", "300", "-o"])
             .arg(&tmp)
             .arg(cand)
