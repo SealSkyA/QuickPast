@@ -94,7 +94,7 @@ class _HomeShellState extends State<HomeShell> {
               child: Row(
                 children: [
                   const Expanded(
-                    child: Text('QuickPaste', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, letterSpacing: .3, color: kFg)),
+                    child: Text('QuickCopy', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, letterSpacing: .3, color: kFg)),
                   ),
                   GestureDetector(
                     onTapDown: (_) => setState(() => _pillDown = true),

@@ -132,7 +132,7 @@ fn alias(app: Option<&AppHandle>) -> String {
             }
         }
     }
-    std::env::var("COMPUTERNAME").unwrap_or_else(|_| "QuickPaste-PC".into())
+    std::env::var("COMPUTERNAME").unwrap_or_else(|_| "QuickCopy-PC".into())
 }
 
 use crate::settings;
@@ -147,7 +147,7 @@ fn my_info(app: Option<&AppHandle>) -> serde_json::Value {
     serde_json::json!({
         "alias": alias(app),
         "version": VERSION,
-        "deviceModel": "QuickPaste",
+        "deviceModel": "QuickCopy",
         "deviceType": "desktop",
         "fingerprint": fingerprint(app),
         "port": port(app),
@@ -225,6 +225,9 @@ pub fn spawn_discovery(app: AppHandle) {
                             continue; // 丢弃自己发出的报文
                         }
                         let alias = v["alias"].as_str().unwrap_or("?");
+                        if alias.contains('\u{FFFD}') {
+                            continue; // 组播报文损坏：丢弃，等 HTTP register 正常覆盖
+                        }
                         let port = v["port"].as_u64().unwrap_or(0);
                         if !device_known(&app, fp) {
                             log(&format!("发现新设备 {alias} ({fp}) 端口 {port}"));
@@ -956,7 +959,7 @@ fn handle_web_home(app: AppHandle, req: tiny_http::Request) {
             .collect();
         let html = format!(
             "<!doctype html><html lang=zh><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">\
-             <title>QuickPaste 分享</title>\
+             <title>QuickCopy 分享</title>\
              <style>\
              body{{margin:0;background:#e9edf2;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#3c4453;display:flex;align-items:center;justify-content:center;min-height:100vh}}\
              .card{{background:#e9edf2;border-radius:16px;box-shadow:8px 8px 16px #c0c7d2,-8px -8px 16px #ffffff;padding:28px 30px;width:min(520px,92vw)}}\
@@ -969,7 +972,7 @@ fn handle_web_home(app: AppHandle, req: tiny_http::Request) {
              .row .go{{color:#4d6fa4;font-weight:600}}\
              .none{{text-align:center;color:#7f8a9b;font-size:13px;padding:20px 0}}\
              </style>\
-             <div class=\"card\"><h1>QuickPaste 文件分享</h1>\
+             <div class=\"card\"><h1>QuickCopy 文件分享</h1>\
              <div class=\"sub\">由 <b>{}</b> 分享 {} 个文件 · 点击下载</div>\
              {}{}</div>",
             alias(Some(&app)),
@@ -981,10 +984,10 @@ fn handle_web_home(app: AppHandle, req: tiny_http::Request) {
         return;
     }
     let html = format!(
-        "<!doctype html><html lang=zh><meta charset=utf-8><title>QuickPaste</title>\
+        "<!doctype html><html lang=zh><meta charset=utf-8><title>QuickCopy</title>\
          <body style=\"font-family:system-ui;display:flex;align-items:center;justify-content:center;height:90vh;background:#e9edf2\">\
-         <div style=\"text-align:center\"><h1>QuickPaste</h1>\
-         <p>这台设备正在运行 QuickPaste 传输服务（{}）</p>\
+         <div style=\"text-align:center\"><h1>QuickCopy</h1>\
+         <p>这台设备正在运行 QuickCopy 传输服务（{}）</p>\
          <p>设备名：<b>{}</b> · 端口 {} · LocalSend v2 兼容</p></div>",
         app.package_info().version.to_string(),
         alias(Some(&app)),

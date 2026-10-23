@@ -1,5 +1,9 @@
-// QuickPaste 手机端 · 入口
+// QuickCopy 手机端 · 入口
+import 'dart:io' show Platform;
+
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/localsend.dart';
@@ -16,7 +20,31 @@ Future<void> main() async {
   final svc = LocalSendService.instance;
   svc.start(); // 后台启动发现 + HTTP 服务
 
-  runApp(const QuickPasteApp());
+  await _requestStoragePermission(); // 首次启动弹存储授权，保证接收文件落盘到 Download
+  runApp(const QuickCopyApp());
+}
+
+/// 存储授权：Android ≤12 请求读写存储；Android 11+ 分区存储下直写
+/// Download 需要「所有文件访问」（MANAGE_EXTERNAL_STORAGE，跳系统设置页）。
+Future<void> _requestStoragePermission() async {
+  if (!Platform.isAndroid) return;
+  try {
+    final info = await DeviceInfoPlugin().androidInfo;
+    if (info.version.sdkInt >= 30) {
+      if (!await Permission.manageExternalStorage.isGranted) {
+        // Android 11+ 的 MANAGE_EXTERNAL_STORAGE 系统不弹授权对话框，
+        // request() 会直接返回，需跳转应用设置页引导用户手动开启「所有文件访问」
+        await Permission.manageExternalStorage.request();
+        if (!await Permission.manageExternalStorage.isGranted) {
+          await openAppSettings();
+        }
+      }
+    } else {
+      if (!await Permission.storage.isGranted) {
+        await Permission.storage.request();
+      }
+    }
+  } catch (_) {} // 无权限对话框环境（如部分模拟器）不阻塞启动
 }
 
 Future<void> _loadSettings() async {
@@ -33,13 +61,13 @@ Future<void> _loadSettings() async {
   await prefs.setString('fingerprint', svc.fingerprint);
 }
 
-class QuickPasteApp extends StatelessWidget {
-  const QuickPasteApp({super.key});
+class QuickCopyApp extends StatelessWidget {
+  const QuickCopyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QuickPaste',
+      title: 'QuickCopy',
       debugShowCheckedModeBanner: false,
       theme: buildNeumorphTheme(),
       home: const HomeShell(),

@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>QuickPaste · 界面原型</title>
+<title>QuickCopy · 界面原型</title>
 <style>
 /* ═══════════ 新拟物（Neumorphism）设计令牌 ═══════════ */
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -521,7 +521,7 @@ button:disabled{opacity:.45;box-shadow:none}
       </div>
       <div class="footerbar">
         <span>状态 <b id="xstat">在线</b></span><span>·</span>
-        <span>服务 <b>QuickPaste-LAN</b></span><span>·</span>
+        <span>服务 <b>QuickCopy-LAN</b></span><span>·</span>
         <span>拖入文件到窗口即可发送</span>
       </div>
     </div>
@@ -591,7 +591,7 @@ button:disabled{opacity:.45;box-shadow:none}
   <div class="mhint">决定发送的目标数量和发送后的行为。</div>
   <div class="mode-opt sel" data-m="one" onclick="pickMode(this)"><div class="mo-ico"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"/></svg></div><div><b>一个接收者</b><span>发送文件给一个接收者。已选择的文件在发送后会取消选择。</span></div></div>
   <div class="mode-opt" data-m="multi" onclick="pickMode(this)"><div class="mo-ico"><svg class="ico" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3 19a6 6 0 0 1 12 0M16 5.5a3.2 3.2 0 0 1 0 6M21 19a6 6 0 0 0-4-5.6"/></svg></div><div><b>多个接收者</b><span>发送文件给多个接收者。全部发送成功后自动取消选择。</span></div></div>
-  <div class="mode-opt" data-m="link" onclick="pickMode(this)"><div class="mo-ico"><svg class="ico" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1-1"/></svg></div><div><b>通过链接分享</b><span>未安装 QuickPaste 的接收者可以在浏览器中打开链接以下载选中的文件。</span></div></div>
+  <div class="mode-opt" data-m="link" onclick="pickMode(this)"><div class="mo-ico"><svg class="ico" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1-1"/></svg></div><div><b>通过链接分享</b><span>未安装 QuickCopy 的接收者可以在浏览器中打开链接以下载选中的文件。</span></div></div>
   <div style="display:flex;gap:10px;margin-top:14px"><button class="pri" style="flex:1" onclick="closeModal('m-mode');toast('发送模式已更新')">确定</button><button style="flex:1" onclick="closeModal('m-mode')">取消</button></div>
 </div>
 
@@ -1303,7 +1303,7 @@ function renderDevs(){
     .filter(x => !favOnly || x.d.fav)
     .filter(x => !q || (x.d.name+' '+x.d.os).toLowerCase().includes(q));
   if(!arr.length){
-    box.innerHTML='<div class="list-empty">'+(DEVS.length ? (favOnly ? '暂无收藏设备 — 点设备行右侧 ☆ 收藏' : '没有匹配的设备') : '未发现附近设备 — 确保接收端已运行 QuickPaste')+'</div>';
+    box.innerHTML='<div class="list-empty">'+(DEVS.length ? (favOnly ? '暂无收藏设备 — 点设备行右侧 ☆ 收藏' : '没有匹配的设备') : '未发现附近设备 — 确保接收端已运行 QuickCopy')+'</div>';
     return;
   }
   box.innerHTML = arr.map(({d,i})=>(

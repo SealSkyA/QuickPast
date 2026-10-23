@@ -1,4 +1,4 @@
-//! QuickPaste 桌面骨架（S0）：全局热键、置顶、窗口几何记忆、设置持久化。
+//! QuickCopy 桌面骨架（S0）：全局热键、置顶、窗口几何记忆、设置持久化。
 //! 扩展点：`modules/` 模块注册表（见 docs/实施/02-全局产品约束与扩展架构.md 4.2）。
 
 pub mod cmds;
@@ -219,7 +219,7 @@ pub fn run() {
             }
             _ => {}
         });
-    let app = builder.build(tauri::generate_context!()).expect("QuickPaste 启动失败");
+    let app = builder.build(tauri::generate_context!()).expect("QuickCopy 启动失败");
     app.run(|handle, event| {
         // 真正退出前：保存一次干净几何（窗口此刻仍是用户布局），并屏蔽退出过程的后续保存
         if let RunEvent::ExitRequested { .. } = event {
@@ -299,7 +299,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     )?;
     TrayIconBuilder::with_id("qp-tray")
         .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("QuickPaste · 快捷粘贴")
+        .tooltip("QuickCopy · 快捷粘贴")
         .menu(&menu)
         // 左键不弹菜单（左键仅呼出/隐藏；菜单只在右键显示）
         .show_menu_on_left_click(false)

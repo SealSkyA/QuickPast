@@ -111,7 +111,7 @@ class _HistoryPageState extends State<HistoryPage> {
     if (dir.isEmpty || !Directory(dir).existsSync()) {
       // 默认外部目录
       final ext = await getExternalStorageDirectory();
-      final candidate = Directory('/storage/emulated/0/Download/QuickPaste');
+      final candidate = Directory('/storage/emulated/0/Download/QuickCopy');
       if (await candidate.exists()) {
         dir = candidate.path;
       } else {

@@ -137,7 +137,7 @@ class _MePageState extends State<MePage> {
                         decoration: BoxDecoration(color: kBg, borderRadius: BorderRadius.circular(11), boxShadow: kInSm),
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          _svc.saveDir.isEmpty ? 'Download/QuickPaste' : _svc.saveDir,
+                          _svc.saveDir.isEmpty ? 'Download/QuickCopy' : _svc.saveDir,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 11, color: kFg),
@@ -237,7 +237,7 @@ class _MePageState extends State<MePage> {
                   right: _mBtn('打开', _aboutDialog),
                 ),
                 NeoRow(
-                  left: const NeoRowTitle('支持', sub: '认可 QuickPaste ？打赏支持一下'),
+                  left: const NeoRowTitle('支持', sub: '认可 QuickCopy ？打赏支持一下'),
                   right: _mBtn('打赏', () => Toast.show(context, '感谢支持')),
                 ),
                 NeoRow(
@@ -304,7 +304,7 @@ class _MePageState extends State<MePage> {
             children: [
               const Icon(Icons.bolt, size: 40, color: kAcc),
               const SizedBox(height: 8),
-              const Text('QuickPaste', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: kFg)),
+              const Text('QuickCopy', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: kFg)),
               const SizedBox(height: 4),
               const Text('v0.2.13 · 与电脑端互通', style: TextStyle(fontSize: 12.5, color: kMut)),
               const SizedBox(height: 6),

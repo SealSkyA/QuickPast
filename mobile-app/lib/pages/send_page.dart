@@ -274,7 +274,7 @@ class _SendPageState extends State<SendPage> {
                           children: [
                             Icon(Icons.wifi_tethering, size: 34, color: kMut),
                             SizedBox(height: 8),
-                            Text('未发现附近设备\n请确认对方已开启 QuickPaste',
+                            Text('未发现附近设备\n请确认对方已开启 QuickCopy',
                                 textAlign: TextAlign.center, style: TextStyle(fontSize: 12.5, color: kMut, height: 1.6)),
                           ],
                         ),

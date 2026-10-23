@@ -106,7 +106,7 @@ class LocalSendService extends ChangeNotifier {
       if (event != RawSocketEvent.read) return;
       final d = sock.receive();
       if (d == null) return;
-      _handleAnnounce(String.fromCharCodes(d.data), d.address.address);
+      _handleAnnounce(utf8.decode(d.data, allowMalformed: true), d.address.address);
       _prune();
     });
     _udp = sock;
@@ -138,6 +138,9 @@ class LocalSendService extends ChangeNotifier {
     }
     final fp = (v['fingerprint'] as String?) ?? '';
     if (fp.isEmpty || fp == fingerprint) return;
+    // 组播报文在 Wi-Fi 上偶发损坏 → 丢弃，等 HTTP register 正常覆盖
+    final alias = (v['alias'] as String?) ?? '';
+    if (alias.contains('\uFFFD')) return;
     _upsert(Device.fromAnnounce(v, fromIp));
     // 单播回执 register（在线时；离线则别人列表无我）
     if (online) {
@@ -189,9 +192,9 @@ class LocalSendService extends ChangeNotifier {
         req.response
           ..statusCode = 200
           ..headers.contentType = ContentType.html
-          ..write('<!doctype html><meta charset=utf-8><title>QuickPaste</title>'
+          ..write('<!doctype html><meta charset=utf-8><title>QuickCopy</title>'
               '<body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:90vh;background:#e9edf2">'
-              '<div style="text-align:center"><h1>QuickPaste</h1>'
+              '<div style="text-align:center"><h1>QuickCopy</h1>'
               '<p>手机端传输服务运行中（port $kPort）</p></div>')
           ..close();
         return;
@@ -400,7 +403,7 @@ class LocalSendService extends ChangeNotifier {
     }
     // 默认：外部下载目录（用户可见）；无存储权限时降级到 App 专属目录保证落盘
     if (Platform.isAndroid) {
-      final dl = Directory('/storage/emulated/0/Download/QuickPaste');
+      final dl = Directory('/storage/emulated/0/Download/QuickCopy');
       try {
         await dl.create(recursive: true);
         final probe = File('${dl.path}/.qp_probe');
@@ -411,7 +414,7 @@ class LocalSendService extends ChangeNotifier {
         // 降级：App 专属外部目录（path_provider，无需存储权限，可靠落盘）
         try {
           final ext = await getExternalStorageDirectory();
-          final dir = Directory('${ext?.path}/QuickPaste');
+          final dir = Directory('${ext?.path}/QuickCopy');
           await dir.create(recursive: true);
           return dir;
         } catch (_) {

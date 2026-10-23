@@ -96,7 +96,7 @@ pub fn qp_set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
                 "add",
                 "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
                 "/v",
-                "QuickPaste",
+                "QuickCopy",
                 "/d",
                 &cmd,
                 "/f",
@@ -112,7 +112,7 @@ pub fn qp_set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
                 "delete",
                 "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
                 "/v",
-                "QuickPaste",
+                "QuickCopy",
                 "/f",
             ])
             .output();
@@ -156,7 +156,7 @@ pub fn qp_show_recv(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn about_info() -> serde_json::Value {
     serde_json::json!({
-        "app": "快捷粘贴 QuickPaste",
+        "app": "快捷粘贴 QuickCopy",
         "version": env!("CARGO_PKG_VERSION"),
         "author": "zhangaiguo",
         "changelog": [
@@ -189,7 +189,7 @@ pub fn qp_check_update() -> Result<serde_json::Value, String> {
     use std::os::windows::process::CommandExt;
     let out = std::process::Command::new("curl")
         .creation_flags(NO_WINDOW)
-        .args(["-fs", "--max-time", "12", "-H", "Accept: application/vnd.github+json", "-H", "User-Agent: QuickPaste"])
+        .args(["-fs", "--max-time", "12", "-H", "Accept: application/vnd.github+json", "-H", "User-Agent: QuickCopy"])
         .arg("https://api.github.com/repos/SealSkyA/QuickPast/releases/latest")
         .output()
         .map_err(|e| format!("无法启动 curl：{e}"))?;
@@ -246,7 +246,7 @@ pub fn qp_download_update(
         .chars()
         .filter(|c| !c.is_ascii_control() && !matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
         .collect();
-    let safe = if safe.trim().is_empty() { "quickpaste_setup.exe".to_string() } else { safe };
+    let safe = if safe.trim().is_empty() { "quickcopy_setup.exe".to_string() } else { safe };
     let path = dir.join(&safe);
     if path.exists() {
         return Ok(path.to_string_lossy().to_string()); // 已下载过

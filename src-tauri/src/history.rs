@@ -563,7 +563,7 @@ pub fn clip_current() -> Result<serde_json::Value, String> {
     let ctx = clipboard_rs::ClipboardContext::new().map_err(|e| e.to_string())?;
     if let Ok(img) = ctx.get_image() {
         let (w, h) = img.get_size();
-        let dir = std::env::temp_dir().join("quickpaste-clip");
+        let dir = std::env::temp_dir().join("quickcopy-clip");
         let _ = std::fs::create_dir_all(&dir);
         let name = format!("剪贴板图片_{}.png", Local::now().format("%Y%m%d_%H%M%S"));
         let path = dir.join(&name);
