@@ -489,18 +489,21 @@ pub fn qp_window_toggle_max(app: AppHandle) -> Result<(), String> {
     }
 }
 
+#[cfg(windows)]
 #[repr(C)]
 struct POINT {
     x: i32,
     y: i32,
 }
 
+#[cfg(windows)]
 #[link(name = "user32")]
 extern "system" {
     fn GetCursorPos(p: *mut POINT) -> i32;
     fn GetAsyncKeyState(vk: i32) -> i16;
 }
 
+#[cfg(windows)]
 const VK_LBUTTON: i32 = 0x01;
 const MIN_W_LOGICAL: f64 = 600.0; // 与 tauri.conf.json minWidth 一致
 const MIN_H_LOGICAL: f64 = 400.0;
@@ -535,6 +538,8 @@ pub fn qp_resize_begin(app: AppHandle, direction: String) -> Result<(), String> 
     if !["n", "s", "e", "w", "ne", "nw", "se", "sw"].contains(&dir.as_str()) {
         return Err(format!("未知缩放方向：{direction}"));
     }
+    #[cfg(windows)]
+    {
     let size = window.outer_size().map_err(|e| e.to_string())?;
     let pos = window.outer_position().map_err(|e| e.to_string())?;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
@@ -593,6 +598,12 @@ pub fn qp_resize_begin(app: AppHandle, direction: String) -> Result<(), String> 
         }
     });
     Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (&window, &dir);
+        Err("当前系统暂不支持鼠标拖拽缩放，请在系统窗口管理器中调整".into())
+    }
 }
 
 /* ────────────── 拖放文件（HTML5 dataTransfer → 临时文件） ────────────── */
