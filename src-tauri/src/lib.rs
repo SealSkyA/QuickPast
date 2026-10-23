@@ -299,7 +299,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     )?;
     TrayIconBuilder::with_id("qp-tray")
         .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("QuickCopy · 快捷粘贴")
+        .tooltip("QuickCopy · 快捷拷贝")
         .menu(&menu)
         // 左键不弹菜单（左键仅呼出/隐藏；菜单只在右键显示）
         .show_menu_on_left_click(false)
