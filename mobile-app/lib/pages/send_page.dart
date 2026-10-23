@@ -98,7 +98,7 @@ class _SendPageState extends State<SendPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('发送文本', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: kFg)),
+              Text('发送文本', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: kFg)),
               const SizedBox(height: 12),
               NeoField(controller: ctrl, width: double.infinity, hint: '输入要发送的文本…', paddingV: 10),
               const SizedBox(height: 16),
@@ -196,7 +196,7 @@ class _SendPageState extends State<SendPage> {
               children: [
                 const NeoCardHeader(Icons.send_rounded, '发送'),
                 const SizedBox(height: 4),
-                const Padding(
+                Padding(
                   padding: EdgeInsets.only(bottom: 12),
                   child: Text('先选择发送类型，再勾选附近设备；发送模式决定目标与行为。', style: TextStyle(fontSize: 12, color: kMut)),
                 ),
@@ -215,7 +215,7 @@ class _SendPageState extends State<SendPage> {
                 // 待发列表 / 未选择提示
                 const SizedBox(height: 12),
                 if (_pending.isEmpty)
-                  const Text('未选择内容 — 点击上方类型图标挑选要发送的内容', style: TextStyle(fontSize: 12, color: kMut))
+                  Text('未选择内容 — 点击上方类型图标挑选要发送的内容', style: TextStyle(fontSize: 12, color: kMut))
                 else
                   Column(
                     children: [
@@ -233,9 +233,9 @@ class _SendPageState extends State<SendPage> {
                 // 标题 + 右侧工具（对齐原型）
                 Row(
                   children: [
-                    const Icon(Icons.radar_rounded, size: 17, color: kAcc),
+                    Icon(Icons.radar_rounded, size: 17, color: kAcc),
                     const SizedBox(width: 9),
-                    const Expanded(child: Text('附近设备', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: kFg))),
+                    Expanded(child: Text('附近设备', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: kFg))),
                     _tool(Icons.check_box_outlined, '全选/清空', _toggleAll),
                     const SizedBox(width: 2),
                     _tool(Icons.refresh_rounded, '刷新扫描', () => _svc.refresh()),
@@ -246,7 +246,7 @@ class _SendPageState extends State<SendPage> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                const Padding(
+                Padding(
                   padding: EdgeInsets.only(bottom: 8),
                   child: Text('发送模式：一个接收者 · 发送后自动取消选择', style: TextStyle(fontSize: 12, color: kMut)),
                 ),
@@ -269,7 +269,7 @@ class _SendPageState extends State<SendPage> {
                       return Container(
                         width: double.infinity,
                         padding: const EdgeInsets.symmetric(vertical: 26),
-                        child: const Column(
+                        child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(Icons.wifi_tethering, size: 34, color: kMut),
@@ -283,7 +283,7 @@ class _SendPageState extends State<SendPage> {
                     return Column(
                       children: [
                         for (var i = 0; i < list.length; i++) ...[
-                          if (i > 0) const Divider(color: kLt, height: 1),
+                          if (i > 0) Divider(color: kLt, height: 1),
                           _deviceRow(list[i]),
                         ],
                       ],
@@ -294,7 +294,7 @@ class _SendPageState extends State<SendPage> {
                 Container(
                   margin: const EdgeInsets.only(top: 10),
                   padding: const EdgeInsets.only(top: 10),
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     border: Border(top: BorderSide(color: kLt, width: 1)),
                   ),
                   constraints: const BoxConstraints(minHeight: 38),
@@ -303,7 +303,7 @@ class _SendPageState extends State<SendPage> {
                       Expanded(
                         child: Text(
                           '已选 ${_checked.length} 台设备',
-                          style: const TextStyle(fontSize: 12, color: kMut),
+                          style: TextStyle(fontSize: 12, color: kMut),
                         ),
                       ),
                       NeoButton('发送', primary: true, small: true, onTap: _sendAll),
@@ -331,7 +331,7 @@ class _SendPageState extends State<SendPage> {
             children: [
               Icon(icon, size: 20, color: kAcc),
               const SizedBox(height: 6),
-              Text(label, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: kFg)),
+              Text(label, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: kFg)),
             ],
           ),
         ),
@@ -347,7 +347,7 @@ class _SendPageState extends State<SendPage> {
       padding: const EdgeInsets.symmetric(vertical: 6),
       decoration: i == 0
           ? null
-          : const BoxDecoration(
+          : BoxDecoration(
               border: Border(top: BorderSide(color: kLt, width: 1)),
             ),
       child: Row(
@@ -363,8 +363,8 @@ class _SendPageState extends State<SendPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(it.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kFg)),
-                Text(isText ? '文本' : fmtBytes(it.size), style: const TextStyle(fontSize: 11, color: kMut)),
+                Text(it.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kFg)),
+                Text(isText ? '文本' : fmtBytes(it.size), style: TextStyle(fontSize: 11, color: kMut)),
               ],
             ),
           ),
@@ -374,7 +374,7 @@ class _SendPageState extends State<SendPage> {
               width: 26,
               height: 26,
               decoration: BoxDecoration(color: kBg, borderRadius: BorderRadius.circular(9), boxShadow: kUpSm),
-              child: const Icon(Icons.close, size: 11, color: kMut),
+              child: Icon(Icons.close, size: 11, color: kMut),
             ),
           ),
         ],
@@ -399,8 +399,8 @@ class _SendPageState extends State<SendPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(d.alias, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: kFg)),
-                  Text('${d.deviceType == 'desktop' ? '电脑' : '手机'} · v${d.version}', style: const TextStyle(fontSize: 11.5, color: kMut)),
+                  Text(d.alias, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: kFg)),
+                  Text('${d.deviceType == 'desktop' ? '电脑' : '手机'} · v${d.version}', style: TextStyle(fontSize: 11.5, color: kMut)),
                 ],
               ),
             ),
@@ -424,7 +424,7 @@ class _SendPageState extends State<SendPage> {
               ),
               alignment: Alignment.center,
               child: on
-                  ? Container(width: 9, height: 9, decoration: const BoxDecoration(color: kAcc, shape: BoxShape.circle))
+                  ? Container(width: 9, height: 9, decoration: BoxDecoration(color: kAcc, shape: BoxShape.circle))
                   : null,
             ),
           ],

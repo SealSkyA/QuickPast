@@ -60,7 +60,7 @@ class NeoRow extends StatelessWidget {
       padding: padding ?? const EdgeInsets.symmetric(vertical: 8),
       decoration: isFirst
           ? null
-          : const BoxDecoration(
+          : BoxDecoration(
               border: Border(top: BorderSide(color: kLt, width: 1)),
               // 灰线去除：行底背景保持与首行一致（用户反馈灰线观感突兀）
               // boxShadow: [BoxShadow(color: Color(0x4DBFC6D0), offset: Offset(0, 1), blurRadius: 0)],
@@ -167,7 +167,7 @@ class NeoIconBtn extends StatefulWidget {
   final double radius;
   final Color? color;
   final VoidCallback? onTap;
-  const NeoIconBtn(this.icon, {super.key, this.size = 38, this.radius = 13, this.color = kAcc, this.onTap});
+  const NeoIconBtn(this.icon, {super.key, this.size = 38, this.radius = 13, this.color = const Color(0xFF4D6FA4), this.onTap});
 
   @override
   State<NeoIconBtn> createState() => _NeoIconBtnState();
@@ -205,7 +205,7 @@ class NeoPill extends StatelessWidget {
   final String text;
   final Color color;
   final VoidCallback? onTap;
-  const NeoPill(this.text, {super.key, this.color = kOk, this.onTap});
+  const NeoPill(this.text, {super.key, this.color = const Color(0xFF2F8F6D), this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -313,12 +313,12 @@ class NeoField extends StatelessWidget {
         readOnly: readOnly,
         keyboardType: keyboardType,
         onChanged: onChanged,
-        style: const TextStyle(fontSize: 13.5, color: kFg),
+        style: TextStyle(fontSize: 13.5, color: kFg),
         decoration: InputDecoration(
           isDense: true,
           contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: paddingV),
           hintText: hint,
-          hintStyle: const TextStyle(color: kMut),
+          hintStyle: TextStyle(color: kMut),
           border: InputBorder.none,
         ),
       ),
@@ -327,7 +327,8 @@ class NeoField extends StatelessWidget {
 }
 
 /// 下拉（凹陷，新拟物弹出菜单——原生 DropdownButton 的 Material 菜单
-/// 是白底灰框，不符合新拟物，故用 Overlay 自绘同色阴影菜单）
+/// 是白底灰框，不符合新拟物；且嵌套在卡片/滚动列表里会因绘制顺序被
+/// 后续兄弟节点遮挡，故用 OverlayEntry 在屏幕顶层自绘同色阴影菜单）。
 class NeoSelect extends StatefulWidget {
   final String value;
   final List<String> options;
@@ -342,87 +343,117 @@ class NeoSelect extends StatefulWidget {
 class _NeoSelectState extends State<NeoSelect> {
   final _key = GlobalKey();
   bool _open = false;
+  OverlayEntry? _overlay;
 
   void _toggle() {
     if (widget.onChanged == null) return;
-    setState(() => _open = !_open);
+    if (_open) {
+      _close();
+    } else {
+      _openMenu();
+    }
+  }
+
+  void _openMenu() {
+    setState(() => _open = true);
+    final overlay = Overlay.of(context, rootOverlay: true);
+    final box = _key.currentContext!.findRenderObject() as RenderBox;
+    final pos = box.localToGlobal(Offset.zero);
+    final h = box.size.height;
+    final menuH = widget.options.length * 38.0 + 12;
+    // 空间不足时向上弹出，避免菜单出屏
+    final screenH = MediaQuery.of(context).size.height;
+    var top = pos.dy + h + 4;
+    if (top + menuH > screenH - 8) top = pos.dy - menuH - 4;
+    _overlay = OverlayEntry(
+      builder: (_) => Stack(
+        children: [
+          // 半透明遮罩拦截外部点击关闭菜单（不吞点击时需 translucent）
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: _close,
+              behavior: HitTestBehavior.translucent,
+              child: const SizedBox.expand(),
+            ),
+          ),
+          Positioned(left: pos.dx, top: top, width: widget.width, child: _buildMenu()),
+        ],
+      ),
+    );
+    overlay.insert(_overlay!);
+  }
+
+  void _close() {
+    _overlay?.remove();
+    _overlay = null;
+    if (mounted) setState(() => _open = false);
   }
 
   void _pick(String v) {
-    setState(() => _open = false);
+    _close();
     widget.onChanged?.call(v);
   }
 
   @override
   Widget build(BuildContext context) {
     final cur = widget.options.contains(widget.value) ? widget.value : widget.options.first;
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        GestureDetector(
-          key: _key,
-          onTap: _toggle,
-          child: Container(
-            width: widget.width,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-            decoration: BoxDecoration(color: kBg, borderRadius: BorderRadius.circular(11), boxShadow: _open ? kIn : kInSm),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(cur, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, color: kFg)),
-                ),
-                AnimatedRotation(
-                  turns: _open ? 0.5 : 0,
-                  duration: const Duration(milliseconds: 180),
-                  child: const Icon(Icons.keyboard_arrow_down, size: 18, color: kMut),
-                ),
-              ],
+    return GestureDetector(
+      key: _key,
+      onTap: _toggle,
+      child: Container(
+        width: widget.width,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        decoration: BoxDecoration(color: kBg, borderRadius: BorderRadius.circular(11), boxShadow: _open ? kIn : kInSm),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(cur, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13.5, color: kFg)),
             ),
-          ),
+            AnimatedRotation(
+              turns: _open ? 0.5 : 0,
+              duration: const Duration(milliseconds: 180),
+              child: Icon(Icons.keyboard_arrow_down, size: 18, color: kMut),
+            ),
+          ],
         ),
-        if (_open) _buildMenu(cur),
-      ],
+      ),
     );
   }
 
-  Widget _buildMenu(String cur) {
-    return Positioned(
-      top: 40,
-      left: 0,
-      child: Container(
-        width: widget.width,
-        decoration: BoxDecoration(
-          color: kBg,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: kUp,
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 5),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var i = 0; i < widget.options.length; i++)
-              InkWell(
-                onTap: () => _pick(widget.options[i]),
-                child: Container(
-                  width: widget.width,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                  decoration: i == 0
-                      ? null
-                      : const BoxDecoration(
-                          border: Border(top: BorderSide(color: kLt, width: 1)),
-                        ),
-                  child: Text(
-                    widget.options[i],
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: widget.options[i] == cur ? FontWeight.w700 : FontWeight.w500,
-                      color: widget.options[i] == cur ? kAcc : kFg,
-                    ),
+  Widget _buildMenu() {
+    final cur = widget.options.contains(widget.value) ? widget.value : widget.options.first;
+    return Container(
+      decoration: BoxDecoration(
+        color: kBg,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: kUp,
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < widget.options.length; i++)
+            InkWell(
+              onTap: () => _pick(widget.options[i]),
+              child: Container(
+                width: widget.width,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                decoration: i == 0
+                    ? null
+                    : BoxDecoration(
+                        border: Border(top: BorderSide(color: kLine, width: 1)),
+                      ),
+                child: Text(
+                  widget.options[i],
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: widget.options[i] == cur ? FontWeight.w700 : FontWeight.w500,
+                    color: widget.options[i] == cur ? kAcc : kFg,
                   ),
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }
@@ -460,7 +491,7 @@ class NeoSearchBox extends StatelessWidget {
       decoration: BoxDecoration(color: kBg, borderRadius: BorderRadius.circular(12), boxShadow: kInSm),
       child: Row(
         children: [
-          const Icon(Icons.search, size: 15, color: kMut),
+          Icon(Icons.search, size: 15, color: kMut),
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
@@ -468,12 +499,12 @@ class NeoSearchBox extends StatelessWidget {
               onChanged: onChanged,
               decoration: InputDecoration(
                 hintText: hint,
-                hintStyle: const TextStyle(fontSize: 13, color: kMut),
+                hintStyle: TextStyle(fontSize: 13, color: kMut),
                 border: InputBorder.none,
                 isCollapsed: true,
                 contentPadding: const EdgeInsets.symmetric(vertical: 10),
               ),
-              style: const TextStyle(fontSize: 13, color: kFg),
+              style: TextStyle(fontSize: 13, color: kFg),
             ),
           ),
         ],
@@ -550,7 +581,7 @@ class Toast {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
                   decoration: BoxDecoration(color: kBg, borderRadius: BorderRadius.circular(999)),
-                  child: Text(msg, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kFg, decoration: TextDecoration.none)),
+                  child: Text(msg, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kFg, decoration: TextDecoration.none)),
                 ),
               ),
             ),

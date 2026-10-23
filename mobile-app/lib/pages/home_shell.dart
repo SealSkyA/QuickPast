@@ -83,50 +83,54 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: kBg,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // 顶栏
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 6, 18, 4),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text('QuickCopy', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, letterSpacing: .3, color: kFg)),
-                  ),
-                  GestureDetector(
-                    onTapDown: (_) => setState(() => _pillDown = true),
-                    onTapCancel: () => setState(() => _pillDown = false),
-                    onTapUp: (_) => setState(() => _pillDown = false),
-                    onTap: _toggleOnline,
-                    child: _onlinePill(),
-                  ),
-                  const SizedBox(width: 10),
-                  _historyButton(),
-                ],
+    // 监听主题模式：切换时重建整页（IndexedStack 子页同类型会保留 State，仅刷新颜色）
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: appThemeMode,
+      builder: (_, mode, __) => Scaffold(
+        backgroundColor: kBg,
+        body: SafeArea(
+          child: Column(
+            children: [
+              // 顶栏
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 6, 18, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text('QuickCopy', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, letterSpacing: .3, color: kFg)),
+                    ),
+                    GestureDetector(
+                      onTapDown: (_) => setState(() => _pillDown = true),
+                      onTapCancel: () => setState(() => _pillDown = false),
+                      onTapUp: (_) => setState(() => _pillDown = false),
+                      onTap: _toggleOnline,
+                      child: _onlinePill(),
+                    ),
+                    const SizedBox(width: 10),
+                    _historyButton(),
+                  ],
+                ),
               ),
-            ),
-            // 内容区
-            Expanded(
-              child: IndexedStack(
-                index: _tab,
-                children: const [RecvPage(), SendPage(), MePage()],
+              // 内容区
+              Expanded(
+                child: IndexedStack(
+                  index: _tab,
+                  children: [RecvPage(), SendPage(), MePage()],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-      ),
-      bottomNavigationBar: Container(
-        height: 70,
-        decoration: const BoxDecoration(color: kBg),
-        child: Row(
-          children: [
-            _tabItem(0, Icons.file_download_outlined, '接收'),
-            _tabItem(1, Icons.send_outlined, '发送'),
-            _tabItem(2, Icons.person_outline, '我的'),
-          ],
+        bottomNavigationBar: Container(
+          height: 70,
+          decoration: BoxDecoration(color: kBg),
+          child: Row(
+            children: [
+              _tabItem(0, Icons.file_download_outlined, '接收'),
+              _tabItem(1, Icons.send_outlined, '发送'),
+              _tabItem(2, Icons.person_outline, '我的'),
+            ],
+          ),
         ),
       ),
     );

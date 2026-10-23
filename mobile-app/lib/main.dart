@@ -61,8 +61,34 @@ Future<void> _loadSettings() async {
   await prefs.setString('fingerprint', svc.fingerprint);
 }
 
-class QuickCopyApp extends StatelessWidget {
+class QuickCopyApp extends StatefulWidget {
   const QuickCopyApp({super.key});
+
+  @override
+  State<QuickCopyApp> createState() => _QuickCopyAppState();
+}
+
+class _QuickCopyAppState extends State<QuickCopyApp> {
+  ThemeMode _mode = ThemeMode.system;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+  }
+
+  /// 读取持久化的主题模式并应用（更新全局 token + MaterialApp.themeMode）
+  Future<void> _loadTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    final s = prefs.getString('themeMode') ?? 'system';
+    final mode = s == 'light'
+        ? ThemeMode.light
+        : s == 'dark'
+            ? ThemeMode.dark
+            : ThemeMode.system;
+    applyThemeMode(mode);
+    if (mounted) setState(() => _mode = mode);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -70,6 +96,8 @@ class QuickCopyApp extends StatelessWidget {
       title: 'QuickCopy',
       debugShowCheckedModeBanner: false,
       theme: buildNeumorphTheme(),
+      darkTheme: buildNeumorphDarkTheme(),
+      themeMode: _mode,
       home: const HomeShell(),
     );
   }

@@ -115,20 +115,20 @@ class _ReadyCard extends StatelessWidget {
             listenable: svc,
             builder: (_, __) => Text(
               svc.alias,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: kFg),
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: kFg),
             ),
           ),
           const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text('自动保存', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kFg)),
+              Text('自动保存', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kFg)),
               const SizedBox(width: 8),
               NeoSwitch(value: svc.autoAccept, onChanged: onAutoSave),
             ],
           ),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             '局域网内的设备可以向本机推送文件，接收记录可在顶栏「历史」中查看。',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 12.5, color: kMut, height: 1.7),
@@ -170,7 +170,7 @@ class _RdarAnimation extends StatelessWidget {
                     child: Container(width: 168, height: 168, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: kAcc, width: 2.5))),
                   ),
                 ),
-              const Icon(Icons.file_download_outlined, color: kAcc, size: 54),
+              Icon(Icons.file_download_outlined, color: kAcc, size: 54),
             ],
           ),
         );
@@ -198,14 +198,14 @@ class _ProgressCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.download_rounded, size: 17, color: kAcc),
+              Icon(Icons.download_rounded, size: 17, color: kAcc),
               const SizedBox(width: 9),
-              const Expanded(child: Text('接收中', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: kFg))),
-              Text('${(pct * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kAcc)),
+              Expanded(child: Text('接收中', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: kFg))),
+              Text('${(pct * 100).toStringAsFixed(0)}%', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kAcc)),
             ],
           ),
           const SizedBox(height: 12),
-          Text('当前文件：${cur.fileName}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kFg)),
+          Text('当前文件：${cur.fileName}', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kFg)),
           const SizedBox(height: 9),
           // 新拟物进度条（内凹轨道 + 凸起填充）
           Container(
@@ -230,11 +230,11 @@ class _ProgressCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   '${fmtBytes(done)} / ${fmtBytes(total)}',
-                  style: const TextStyle(fontSize: 11.5, color: kMut),
+                  style: TextStyle(fontSize: 11.5, color: kMut),
                 ),
               ),
               if (files.length > 1)
-                Text('文件 $finished/${files.length}', style: const TextStyle(fontSize: 11.5, color: kMut)),
+                Text('文件 $finished/${files.length}', style: TextStyle(fontSize: 11.5, color: kMut)),
             ],
           ),
         ],
@@ -266,8 +266,8 @@ class _RequestCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(session.senderAlias, style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: kFg)),
-                    Text('IP ${session.senderIp} · 请求接收 ${files.length} 个内容', style: const TextStyle(fontSize: 11.5, color: kMut)),
+                    Text(session.senderAlias, style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: kFg)),
+                    Text('IP ${session.senderIp} · 请求接收 ${files.length} 个内容', style: TextStyle(fontSize: 11.5, color: kMut)),
                   ],
                 ),
               ),
@@ -281,8 +281,8 @@ class _RequestCard extends StatelessWidget {
                 children: [
                   Icon(f.isText ? Icons.notes_outlined : Icons.insert_drive_file_outlined, size: 15, color: kAcc),
                   const SizedBox(width: 8),
-                  Expanded(child: Text(f.fileName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kFg))),
-                  Text(f.isText ? '文本' : fmtBytes(f.size), style: const TextStyle(fontSize: 11.5, color: kMut)),
+                  Expanded(child: Text(f.fileName, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kFg))),
+                  Text(f.isText ? '文本' : fmtBytes(f.size), style: TextStyle(fontSize: 11.5, color: kMut)),
                 ],
               ),
             ),

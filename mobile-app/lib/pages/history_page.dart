@@ -33,7 +33,7 @@ class _HistoryPageState extends State<HistoryPage> {
               child: Row(
                 children: [
                   NeoIconBtn(Icons.arrow_back_ios_new_rounded, size: 38, radius: 13, color: kFg, onTap: () => Navigator.pop(context)),
-                  const Expanded(
+                  Expanded(
                     child: Padding(
                       padding: EdgeInsets.only(left: 10),
                       child: Text('历史记录', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600, color: kFg)),
@@ -62,7 +62,7 @@ class _HistoryPageState extends State<HistoryPage> {
                         children: [
                           Icon(Icons.history_rounded, size: 40, color: kMut.withValues(alpha: .6)),
                           const SizedBox(height: 10),
-                          const Text('暂无收发记录', style: TextStyle(fontSize: 13, color: kMut)),
+                          Text('暂无收发记录', style: TextStyle(fontSize: 13, color: kMut)),
                         ],
                       ),
                     );
@@ -93,7 +93,7 @@ class _HistoryPageState extends State<HistoryPage> {
         decoration: BoxDecoration(color: kBg, borderRadius: BorderRadius.circular(12), boxShadow: kUpSm),
         child: Row(
           children: [
-            const Icon(Icons.folder_open_outlined, size: 16, color: kAcc),
+            Icon(Icons.folder_open_outlined, size: 16, color: kAcc),
             const SizedBox(width: 6),
             Text('打开目录', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: kAcc.withValues(alpha: 0.95))),
           ],
@@ -132,7 +132,7 @@ class _HistoryPageState extends State<HistoryPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('删除全部历史记录？', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: kFg)),
+              Text('删除全部历史记录？', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: kFg)),
               const SizedBox(height: 14),
               Row(
                 children: [
@@ -165,12 +165,12 @@ class _HistoryPageState extends State<HistoryPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(e.summary, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: kFg)),
-                Text('$txt · ${e.peerAlias} · ${e.detail}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, color: kMut)),
+                Text(e.summary, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: kFg)),
+                Text('$txt · ${e.peerAlias} · ${e.detail}', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11.5, color: kMut)),
               ],
             ),
           ),
-          Text(_fmt(e.time), style: const TextStyle(fontSize: 11.5, color: kMut)),
+          Text(_fmt(e.time), style: TextStyle(fontSize: 11.5, color: kMut)),
         ],
       ),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
