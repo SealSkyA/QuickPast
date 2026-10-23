@@ -1,0 +1,55 @@
+name: build-deb-linux
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  deb:
+    # 免费公开 arm64 runner（真 ARM 硬件，glibc 2.35 / webkit2gtk-4.1）
+    # 产物面向：arm64 麒麟 V10 SP2+ / UOS 20(1060)+
+    runs-on: ubuntu-22.04-arm
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: 系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl wget file pkg-config \
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
+            libayatana-appindicator3-dev libxdo-dev libssl-dev patchelf
+
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: 前端依赖
+        run: npm ci
+
+      - name: 构建 deb（arm64）
+        run: npx tauri build -- --bundles deb
+
+      - name: 汇总产物
+        run: |
+          mkdir -p dist
+          cp src-tauri/target/release/bundle/deb/*.deb dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quickcopy-deb-arm64
+          path: dist/
+
+      - name: 挂到 Release（tag 触发时）
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.deb
