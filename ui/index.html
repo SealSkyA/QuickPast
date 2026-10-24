@@ -669,7 +669,7 @@ button:disabled{opacity:.45;box-shadow:none}
 
 <script>
 /* ═══════ 数据（S1 真实剪贴板历史，运行时由 history_load 填充） ═══════ */
-const QP = (window.__TAURI__ && window.__TAURI__.core) ? window.__TAURI__.core : null;
+const QP = (window.__TAURI__ && window.__TAURI__.invoke) ? window.__TAURI__ : null;
 function qpInvoke(cmd, args){ if(QP) return QP.invoke(cmd, args||{}); return Promise.reject('no-tauri'); }
 let DATA = [];
 let catNow = 'all', editMode = false, picked = [];
@@ -1044,9 +1044,9 @@ function cardMenuAction(id, act){
 async function saveAs(id){
   const d = DATA.find(x=>x.id===id); if(!d) return;
   // 优先用 Tauri 全局 dialog API（已确认存在），兜底走插件命令
-  const dlg = (window.__TAURI__ && window.__TAURI__.dialog) || null;
-  const dlgsave = (o) => dlg ? dlg.save(o) : qpInvoke('plugin:dialog|save', {options:o});
-  const dlgopen = (o) => dlg ? dlg.open(o) : qpInvoke('plugin:dialog|open', {options:o});
+  // Tauri 1（webkit2gtk-4.0）：无 dialog 全局 API，另存为/选目录走自写命令
+  const dlgsave = (o) => qpInvoke('qp_pick_save', {}).then(p => p || null);
+  const dlgopen = (o) => qpInvoke('qp_pick_dir', {}).then(p => p || null);
   try{
     if(d.cat==='img'){
       const dest = await dlgsave({defaultPath:d.name||'image.png', title:'另存为'});
@@ -1377,9 +1377,9 @@ function pickType(el,name){
   if(name==='文件' || name==='文件夹'){
     // WebView2 下 <input type=file> 拿不到文件路径（File.path 在 Tauri 2 未注入），
     // 改用 tauri-plugin-dialog 原生选择框，直接返回磁盘绝对路径。
-    const opt = { multiple:true };
-    if(name==='文件夹') opt.directory = true;
-    __TAURI__.dialog.open(opt).then(paths=>{
+    const pickP = (name==='文件夹') ? qpInvoke('qp_pick_dir', {}).then(d => d ? [d] : []) : qpInvoke('qp_pick_files', {}).then(a => a || []);
+    // 文件→qp_pick_files（多选）；文件夹→qp_pick_dir（单选）→ 归一成数组
+    pickP.then(paths=>{
       if(!paths) return;
       if(typeof paths==='string') paths=[paths];
       let n=0;
@@ -1575,10 +1575,10 @@ document.getElementById('mask').onclick=closeAllPopup;
 renderList(); renderDevs(); loadFav();
 /* 历史载入兜底：Tauri 注入与后端 setup 均存在时序竞态，就绪后载入历史 + 注册剪贴板监听（与适配层去重） */
 (function initHistory(){
-  if(!(window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.event)){
+  if(!(window.__TAURI__ && window.__TAURI__.invoke && window.__TAURI__.event)){
     setTimeout(initHistory, 100); return;
   }
-  window.__TAURI__.core.invoke('history_load').then(list => {
+  window.__TAURI__.invoke('history_load').then(list => {
     if(Array.isArray(list) && list.length && typeof DATA !== 'undefined'){ DATA = list; renderList(); }
     else setTimeout(initHistory, 400); // 后端 setup 未就绪时为空，重试
   }).catch(()=>{ setTimeout(initHistory, 400); });
@@ -1613,7 +1613,7 @@ renderList(); renderDevs(); loadFav();
 /* ═══════════ Tauri 桌面适配层（无 Tauri 环境时自动降级为原型演示逻辑） ═══════════ */
 (function initTauri() {
   // Tauri 注入时机与页面脚本执行存在竞态：未就绪则轮询等待，避免适配层提前退出
-  if (!(window.__TAURI__ && window.__TAURI__.window && window.__TAURI__.core)) {
+  if (!(window.__TAURI__ && window.__TAURI__.window && window.__TAURI__.invoke)) {
     setTimeout(initTauri, 100);
     return;
   }
@@ -1641,7 +1641,7 @@ renderList(); renderDevs(); loadFav();
     const d = e.target.getAttribute('data-d');
     if (!d) return;
     e.preventDefault();
-    T.core.invoke('qp_resize_begin', { direction: d }).catch(() => {});
+    T.invoke('qp_resize_begin', { direction: d }).catch(() => {});
   });
 
   /* —— 窗口控制：真实动作，原型降级兜底 —— */
@@ -1661,7 +1661,7 @@ renderList(); renderDevs(); loadFav();
     b.classList.toggle('on', on);
     const w = await curWin();
     if (w) await w.setAlwaysOnTop(on);
-    try { await T.core.invoke('set_setting', { key: 'pin', value: on }); } catch (e) {}
+    try { await T.invoke('set_setting', { key: 'pin', value: on }); } catch (e) {}
   };
 
   /* 切页后同步真实置顶态（含“文件传输自动置顶”默认逻辑） */
@@ -1683,7 +1683,7 @@ renderList(); renderDevs(); loadFav();
     if (typeof toast === 'function') toast('已清空历史');
   });
   /* —— S1：载入剪贴板历史（兜底 initHistory 已保证非空；此处空数组不覆盖已有数据）+ 监听新条目 —— */
-  T.core.invoke('history_load').then(list => {
+  T.invoke('history_load').then(list => {
     if (Array.isArray(list) && list.length && typeof DATA !== 'undefined' && typeof renderList === 'function') {
       DATA = list; renderList();
     }
@@ -1734,7 +1734,7 @@ renderList(); renderDevs(); loadFav();
     os: ((d && d.deviceType) || 'desktop') + ((d && d.version) ? ' · v' + d.version : ''),
     on: true, sel: false, fav: false, fp: (d && d.fingerprint) || '', raw: d
   });
-  T.core.invoke('net_devices').then(list => {
+  T.invoke('net_devices').then(list => {
     if (Array.isArray(list)) { DEVS = list.map(normDev); if (typeof renderDevs === 'function') renderDevs(); }
   }).catch(() => {});
   listen('qp:devices', e => {
@@ -1742,11 +1742,11 @@ renderList(); renderDevs(); loadFav();
     if (Array.isArray(list)) { DEVS = list.map(normDev); if (typeof renderDevs === 'function') renderDevs(); }
   });
   window.netRefresh = function () {
-    return T.core.invoke('net_refresh').then(() => { if (typeof toast === 'function') toast('已刷新附近设备'); }).catch(() => {});
+    return T.invoke('net_refresh').then(() => { if (typeof toast === 'function') toast('已刷新附近设备'); }).catch(() => {});
   };
 
   /* —— 本机信息：别名 / 自动保存 —— */
-  T.core.invoke('net_my_info').then(i => {
+  T.invoke('net_my_info').then(i => {
     if (i && i.alias) {
       const a = document.getElementById('aliasTxt'); if (a) a.textContent = i.alias;
       const s = document.getElementById('setAlias'); if (s) s.value = i.alias;
@@ -1759,13 +1759,13 @@ renderList(); renderDevs(); loadFav();
     x.textContent = on ? '在线' : '离线';
     x.style.color = on ? 'var(--ok)' : 'var(--warn)';
   };
-  T.core.invoke('get_setting', { key: 'net.autoSave' }).then(v => {
+  T.invoke('get_setting', { key: 'net.autoSave' }).then(v => {
     if (v) {
       const c = document.getElementById('autoSave'); if (c) c.checked = !!v;
       const f = document.getElementById('fastSave'); if (f) f.checked = !!v;    }
   }).catch(() => {});
   /* —— 呼出快捷键：设置值同步到底栏与设置页 —— */
-  T.core.invoke('get_setting', { key: 'hotkey' }).then(v => {
+  T.invoke('get_setting', { key: 'hotkey' }).then(v => {
     if (v && typeof v === 'string') {
       const inp = document.getElementById('hotkeyInput'); if (inp) inp.value = v;
       const ft = document.getElementById('hotkeyTxt'); if (ft) ft.textContent = v;
@@ -1773,26 +1773,26 @@ renderList(); renderDevs(); loadFav();
   }).catch(() => {});
   /* —— 类别数量上限：回填设置页（默认 文字200/图片200/文件100） —— */
   [['textLimitSel','history.limitText',200],['imgLimitSel','history.limitImg',200],['fileLimitSel','history.limitFile',100]].forEach(p => {
-    T.core.invoke('get_setting', { key: p[1] }).then(v => {
+    T.invoke('get_setting', { key: p[1] }).then(v => {
       const el = document.getElementById(p[0]);
       if (el && typeof v === 'number') el.value = v;
     }).catch(() => {});
   });
   /* —— 默认分类：启动时定位到所选分类（默认全部） —— */
-  T.core.invoke('get_setting', { key: 'defaultCat' }).then(v => {
+  T.invoke('get_setting', { key: 'defaultCat' }).then(v => {
     const c = (v && typeof v === 'string') ? v : 'all';
     const dc = document.getElementById('defCatSel'); if (dc) dc.value = c;
     const el = document.querySelector('.rail-item[data-cat="' + c + '"]');
     if (el && typeof switchCat === 'function') switchCat(el);
   }).catch(() => {});
   /* —— 页面字号：启动时应用 —— */
-  T.core.invoke('get_setting', { key: 'fontSize' }).then(v => {
+  T.invoke('get_setting', { key: 'fontSize' }).then(v => {
     if (typeof applyFontSize === 'function') applyFontSize(typeof v === 'number' ? v : 14);
   }).catch(() => {});
   window.autoSaveChange = function () {
     const c = document.getElementById('autoSave');
     const on = !!(c && c.checked);
-    T.core.invoke('set_setting', { key: 'net.autoSave', value: on }).catch(() => {});
+    T.invoke('set_setting', { key: 'net.autoSave', value: on }).catch(() => {});
     if (typeof toast === 'function') toast(on ? '已开启自动保存：文件将自动存入保存目录' : '已关闭自动保存：接收需手动确认');
   };
 
@@ -1804,21 +1804,21 @@ renderList(); renderDevs(); loadFav();
   };
   window.netOnlineChange = function () {
     const on = !!(document.getElementById('netOnlineSw') && document.getElementById('netOnlineSw').checked);
-    T.core.invoke('set_setting', { key: 'net.online', value: on }).catch(() => {});
+    T.invoke('set_setting', { key: 'net.online', value: on }).catch(() => {});
     if (typeof window.applyNetOnline === 'function') window.applyNetOnline(on);
     if (typeof toast === 'function') toast(on ? '已上线：其他设备可发现本机' : '已离线：其他设备检测不到本机');
   };
-  T.core.invoke('get_setting', { key: 'net.online' }).then(v => {
+  T.invoke('get_setting', { key: 'net.online' }).then(v => {
     if (typeof window.applyNetOnline === 'function') window.applyNetOnline(v !== false);
   }).catch(() => {});
   /* —— 开机自启：设置值回填开关；切换时写入设置并实际调用系统自启（注册表 Run 键） —— */
   window.bootChange = function () {
     const on = !!(document.getElementById('bootSel') && document.getElementById('bootSel').checked);
-    T.core.invoke('qp_set_autostart', { on: on }).then(() => {
+    T.invoke('qp_set_autostart', { on: on }).then(() => {
       if (typeof toast === 'function') toast(on ? '已开启开机自启' : '已关闭开机自启');
     }).catch(() => {});
   };
-  T.core.invoke('get_setting', { key: 'autostart' }).then(v => {
+  T.invoke('get_setting', { key: 'autostart' }).then(v => {
     const b = document.getElementById('bootSel'); if (b) b.checked = !!v;
   }).catch(() => {});
 
@@ -1877,7 +1877,7 @@ renderList(); renderDevs(); loadFav();
   window.acceptIncoming = function () {
     closeModal('m-incoming');
     const si = (typeof window.__incSession === 'string') ? window.__incSession : '';
-    T.core.invoke('net_accept', { sessionId: si, fileIds: null }).then(() => {
+    T.invoke('net_accept', { sessionId: si, fileIds: null }).then(() => {
       const c = document.getElementById('rcvCard'); if (c) c.style.display = '';
       if (typeof toast === 'function') toast('已接受，开始接收…');
     }).catch(e => {
@@ -1890,7 +1890,7 @@ renderList(); renderDevs(); loadFav();
     closeModal('m-incoming');
     const si = (typeof window.__incSession === 'string') ? window.__incSession : '';
     window.__incBusy = false;
-    T.core.invoke('net_reject', { sessionId: si }).then(() => {
+    T.invoke('net_reject', { sessionId: si }).then(() => {
       if (typeof toast === 'function') toast('已拒绝');
     }).catch(e => { if (typeof toast === 'function') toast('拒绝失败：' + e, true); });
     showNextIncoming();
@@ -1944,7 +1944,7 @@ renderList(); renderDevs(); loadFav();
     const a = document.getElementById('setAlias');
     if (a && a.value && a.value.trim()) {
       try {
-        await T.core.invoke('net_set_alias', { alias: a.value.trim() });
+        await T.invoke('net_set_alias', { alias: a.value.trim() });
         const t = document.getElementById('aliasTxt'); if (t) t.textContent = a.value.trim();
       } catch (e) { if (typeof toast === 'function') toast('别名保存失败：' + e, true); }
     }
@@ -1953,46 +1953,46 @@ renderList(); renderDevs(); loadFav();
     if (hk && hk.value && hk.value.trim()) {
       const combo = hk.value.trim();
       try {
-        await T.core.invoke('qp_set_hotkey', { combo });
+        await T.invoke('qp_set_hotkey', { combo });
         const ft = document.getElementById('hotkeyTxt'); if (ft) ft.textContent = combo;
       } catch (e) { if (typeof toast === 'function') toast('快捷键保存失败：' + e, true); }
     }
     // 自动保存
     const auto = document.getElementById('autoSave');
-    if (auto) T.core.invoke('set_setting', { key: 'net.autoSave', value: auto.checked }).catch(() => {});
+    if (auto) T.invoke('set_setting', { key: 'net.autoSave', value: auto.checked }).catch(() => {});
     // 默认分类
     const dc = document.getElementById('defCatSel');
-    if (dc) T.core.invoke('set_setting', { key: 'defaultCat', value: dc.value }).catch(() => {});
+    if (dc) T.invoke('set_setting', { key: 'defaultCat', value: dc.value }).catch(() => {});
     // 页面字号
     const fs = document.getElementById('fontSizeSel');
     if (fs && fs.value) {
       const n = Math.min(20, Math.max(12, parseInt(fs.value, 10) || 14));
-      T.core.invoke('set_setting', { key: 'fontSize', value: n }).catch(() => {});
+      T.invoke('set_setting', { key: 'fontSize', value: n }).catch(() => {});
       if (typeof applyFontSize === 'function') applyFontSize(n);
     }
     // 保存目录（接收落地目录）
     const sd = document.getElementById('saveDirInput');
     if (sd && sd.value && sd.value.trim()) {
-      T.core.invoke('set_setting', { key: 'net.saveDir', value: sd.value.trim() }).catch(() => {});
+      T.invoke('set_setting', { key: 'net.saveDir', value: sd.value.trim() }).catch(() => {});
     }
     // 服务器在线/离线（与接收页开关、底栏同步为同一设置）
     const nm = document.getElementById('netModeSel');
     if (nm) {
       const on = nm.value === 'true';
-      T.core.invoke('set_setting', { key: 'net.online', value: on }).catch(() => {});
+      T.invoke('set_setting', { key: 'net.online', value: on }).catch(() => {});
       if (typeof window.applyNetOnline === 'function') window.applyNetOnline(on);
     }
     // 监听端口（高级）
     const np = document.getElementById('netPortInput');
     if (np && np.value) {
       const n = Math.min(65535, Math.max(1, parseInt(np.value, 10) || 53318));
-      T.core.invoke('set_setting', { key: 'net.port', value: n }).catch(() => {});
+      T.invoke('set_setting', { key: 'net.port', value: n }).catch(() => {});
     }
     // 搜索设备超时（高级）
     const ntm = document.getElementById('netDeviceTtlInput');
     if (ntm && ntm.value) {
       const n = Math.min(600, Math.max(5, parseInt(ntm.value, 10) || 25));
-      T.core.invoke('set_setting', { key: 'net.deviceTtl', value: n }).catch(() => {});
+      T.invoke('set_setting', { key: 'net.deviceTtl', value: n }).catch(() => {});
     }
     // 类别数量上限：保存 + 立即裁剪（超出删最早）
     const caps = [['textLimitSel','history.limitText'],['imgLimitSel','history.limitImg'],['fileLimitSel','history.limitFile']];
@@ -2001,12 +2001,12 @@ renderList(); renderDevs(); loadFav();
       const el = document.getElementById(pair[0]);
       if (el && el.value) {
         const n = Math.max(parseInt(el.value, 10) || 0, 1);
-        T.core.invoke('set_setting', { key: pair[1], value: n }).catch(() => {});
+        T.invoke('set_setting', { key: pair[1], value: n }).catch(() => {});
         capChanged = true;
       }
     }
     if (capChanged) {
-      T.core.invoke('history_apply_limits').then(rm => {
+      T.invoke('history_apply_limits').then(rm => {
         if (rm && rm.length) {
           for (const rid of rm) { const i = DATA.findIndex(x => x.id === rid); if (i >= 0) DATA.splice(i, 1); }
           if (typeof renderList === 'function') renderList();
@@ -2020,7 +2020,7 @@ renderList(); renderDevs(); loadFav();
 
   /* —— 服务器刷新（真实广播；修改别名后立即让其他设备发现） —— */
   window.netRefresh = function () {
-    T.core.invoke('net_refresh', {}).then(() => {
+    T.invoke('net_refresh', {}).then(() => {
       if (typeof toast === 'function') toast('已广播刷新');
     }).catch(e => { if (typeof toast === 'function') toast('刷新失败：' + e, true); });
   };
@@ -2028,7 +2028,7 @@ renderList(); renderDevs(); loadFav();
   /* —— 保存目录选择（系统对话框） —— */
   window.pickSaveDir = async function () {
     try {
-      const sel = await T.dialog.open({ directory: true, multiple: false });
+      const sel = await qpInvoke('qp_pick_dir', {});
       if (typeof sel === 'string') {
         const inp = document.getElementById('saveDirInput');
         if (inp) inp.value = sel;
@@ -2038,12 +2038,12 @@ renderList(); renderDevs(); loadFav();
 
   /* —— 高级设置：缓存 —— */
   window.openCacheDir = function () {
-    T.core.invoke('qp_cache_dir').then(dir => {
-      T.core.invoke('open_path', { path: dir }).catch(() => {});
+    T.invoke('qp_cache_dir').then(dir => {
+      T.invoke('open_path', { path: dir }).catch(() => {});
     }).catch(() => {});
   };
   window.clearCache = function () {
-    T.core.invoke('qp_clear_cache').then(b => {
+    T.invoke('qp_clear_cache').then(b => {
       if (typeof toast === 'function') toast('缓存已清空（释放 ' + (b > 0 ? (b / 1024).toFixed(1) + ' KB' : '0 B') + '）');
     }).catch(e => { if (typeof toast === 'function') toast('清空失败：' + e, true); });
   };
@@ -2052,32 +2052,32 @@ renderList(); renderDevs(); loadFav();
   const _origApplyTheme = window.applyTheme;
   window.applyTheme = function (t) {
     if (_origApplyTheme) _origApplyTheme(t);
-    try { T.core.invoke('set_setting', { key: 'theme', value: t }); } catch (e) {}
+    try { T.invoke('set_setting', { key: 'theme', value: t }); } catch (e) {}
   };
 
   /* —— 启动恢复：主题 / 置顶 / 文件传输设置 / 信任设备 —— */
   (async function restore() {
     try {
-      const theme = await T.core.invoke('get_setting', { key: 'theme' });
+      const theme = await T.invoke('get_setting', { key: 'theme' });
       if (theme && typeof applyTheme === 'function') applyTheme(theme);
-      const pin = await T.core.invoke('get_setting', { key: 'pin' });
+      const pin = await T.invoke('get_setting', { key: 'pin' });
       if (pin) {
         document.getElementById('wPin').classList.add('on');
         const w = await curWin(); if (w) await w.setAlwaysOnTop(true);
       }
       // 文件传输设置填充（保存目录显示当前生效路径：自定义 → 默认桌面）
-      const sd = await T.core.invoke('net_save_dir', {}).catch(() => '');
+      const sd = await T.invoke('net_save_dir', {}).catch(() => '');
       const inp = document.getElementById('saveDirInput');
       if (inp && typeof sd === 'string' && sd) inp.value = sd;
-      const nm = await T.core.invoke('get_setting', { key: 'net.online' }).catch(() => null);
+      const nm = await T.invoke('get_setting', { key: 'net.online' }).catch(() => null);
       if (typeof window.applyNetOnline === 'function') window.applyNetOnline(nm !== false);
-      const np = await T.core.invoke('get_setting', { key: 'net.port' }).catch(() => null);
+      const np = await T.invoke('get_setting', { key: 'net.port' }).catch(() => null);
       const npi = document.getElementById('netPortInput');
       if (npi) npi.value = (typeof np === 'number' && np > 0) ? np : 53318;
-      const nt = await T.core.invoke('get_setting', { key: 'net.deviceTtl' }).catch(() => null);
+      const nt = await T.invoke('get_setting', { key: 'net.deviceTtl' }).catch(() => null);
       const nti = document.getElementById('netDeviceTtlInput');
       if (nti) nti.value = (typeof nt === 'number' && nt >= 5) ? nt : 25;
-      const alias = await T.core.invoke('get_setting', { key: 'net.alias' }).catch(() => null);
+      const alias = await T.invoke('get_setting', { key: 'net.alias' }).catch(() => null);
       const ai = document.getElementById('setAlias');
       if (ai && typeof alias === 'string' && alias) ai.value = alias;
     } catch (e) {}

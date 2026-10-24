@@ -6,15 +6,12 @@ pub mod history;
 pub mod net;
 pub mod paths;
 pub mod settings;
+pub mod single;
 
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{App, AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, RunEvent, Size, WindowEvent};
-use tauri_plugin_autostart::MacosLauncher;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri::{App, AppHandle, CustomMenuItem, Manager, PhysicalPosition, PhysicalSize, Position, RunEvent, Size, SystemTray, SystemTrayEvent, SystemTrayMenu, WindowEvent};
 
 pub const MAIN_LABEL: &str = "main";
 const GEOM_KEY: &str = "window.geometry";
@@ -59,8 +56,9 @@ pub struct DownloadStateInner {
 }
 
 /// 当前注册的呼出快捷键（支持设置页动态修改）
+/// 内部记录「组合字符串 + 已注册的 HotKey」：比对用字符串，退订用 HotKey 对象
 struct HotkeyState {
-    cur: Mutex<Option<String>>,
+    cur: Mutex<Option<(String, global_hotkey::hotkey::HotKey)>>,
 }
 
 impl Default for HotkeyState {
@@ -81,24 +79,39 @@ struct GeomValue {
 }
 
 pub fn run() {
+    // 单实例：独占端口失败说明已有实例 → 唤醒它（呼出主窗口）后本进程退出
+    let listener = match single::acquire() {
+        Some(l) => l,
+        None => {
+            single::poke_existing();
+            std::process::exit(0);
+        }
+    };
     let builder = tauri::Builder::default()
-        // 单实例：已运行时再次启动（双击图标/快捷方式）→ 呼出主窗口，不重复开进程
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(w) = app.get_webview_window(MAIN_LABEL) {
-                let _ = w.unminimize();
-                let _ = w.show();
-                let _ = w.set_skip_taskbar(false);
-                let _ = w.set_focus();
-            }
-        }))
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
-        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .manage(HotkeyState::default())
         .manage(history::History::default())
         .manage(DownloadState::default())
         .manage(net::NetState::default())
+        .system_tray(build_tray())
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show" => toggle_main(app, true),
+            "settings" => {
+                toggle_main(app, true);
+                let _ = app.emit_all("qp:open-settings", ());
+            }
+            "about" => {
+                let _ = cmds::qp_show_about(app.clone());
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_system_tray_event(|app, event| {
+            // 左键单击：呼出/隐藏主界面（右键由系统弹出菜单）
+            if let SystemTrayEvent::LeftClick { .. } = event {
+                toggle_main(app, true);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             cmds::get_setting,
             cmds::set_setting,
@@ -153,11 +166,16 @@ pub fn run() {
             net::net_share,
             net::net_set_alias,
             net::net_my_info,
-            cmds::qp_save_drag_files
+            cmds::qp_save_drag_files,
+            cmds::qp_pick_files,
+            cmds::qp_pick_dir,
+            cmds::qp_pick_save
         ])
-        .setup(|app| {
+        .setup(move |app| {
             // 数据迁移：旧版本数据在 C 盘 AppData，新版本统一存安装路径 → 一次性复制
             migrate_data(app.handle());
+            // 单实例：维持独占监听，后续启动实例在此处呼出主窗口
+            single::spawn_wake_listener(app.handle().clone(), listener);
             // S1 剪贴板历史：载入持久化数据（含存量去重）并启动监听
             let loaded = history::load_items(app.handle());
             {
@@ -189,12 +207,11 @@ pub fn run() {
             };
             let _ = settings::set_key(app.handle(), "hotkey", serde_json::json!(hotkey));
             apply_hotkey(app.handle(), &hotkey);
-            setup_tray(app.handle())?;
             restore_geometry(app)?;
             // 开机自启：静默启动（不显示主窗口，托盘/热键常驻）。
             // 仅在带 --hidden 参数启动时静默（开机自启注册表写入该参数）；手动双击启动 → 正常显示窗口。
             if std::env::args().any(|a| a == "--hidden") {
-                if let Some(w) = app.get_webview_window(MAIN_LABEL) {
+                if let Some(w) = app.get_window(MAIN_LABEL) {
                     let _ = w.set_skip_taskbar(true);
                     let _ = w.hide();
                 }
@@ -234,6 +251,16 @@ pub fn run() {
 }
 
 /* ────────────── 热键呼出（支持动态修改） ────────────── */
+// Tauri 1 无官方 global-shortcut 插件发布 → 改用独立 global-hotkey crate（Win API / Linux X11，Wayland 不支持）。
+// 全局事件回调只能注册一次：经 OnceLock 的 AppHandle 调用 toggle_main。
+
+use global_hotkey::hotkey::{Code, HotKey, Modifiers};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, KeyState};
+
+/// 事件回调用的 AppHandle（OnceLock：首次 apply_hotkey 时写入）
+static HK_APP: OnceLock<AppHandle> = OnceLock::new();
+/// 全局快捷键管理器（长驻保活）
+static HK_MGR: OnceLock<GlobalHotKeyManager> = OnceLock::new();
 
 /// 热键调试日志（%TEMP%\qp-hotkey.log）
 fn hlog(msg: &str) {
@@ -243,97 +270,128 @@ fn hlog(msg: &str) {
     }
 }
 
+/// 解析 "Ctrl+Alt+Z" / "Alt+F9" 等组合（大小写、分隔符容忍）
+fn parse_combo(s: &str) -> Option<HotKey> {
+    let mut mods = Modifiers::empty();
+    let mut key: Option<Code> = None;
+    for p in s.split('+') {
+        let up = p.trim().to_uppercase();
+        match up.as_str() {
+            "CTRL" | "CONTROL" | "CMD" => mods |= Modifiers::CONTROL,
+            "ALT" | "OPT" => mods |= Modifiers::ALT,
+            "SHIFT" => mods |= Modifiers::SHIFT,
+            "META" | "SUPER" | "WIN" | "LOGO" => mods |= Modifiers::META,
+            "F1" => key = Some(Code::F1),
+            "F2" => key = Some(Code::F2),
+            "F3" => key = Some(Code::F3),
+            "F4" => key = Some(Code::F4),
+            "F5" => key = Some(Code::F5),
+            "F6" => key = Some(Code::F6),
+            "F7" => key = Some(Code::F7),
+            "F8" => key = Some(Code::F8),
+            "F9" => key = Some(Code::F9),
+            "F10" => key = Some(Code::F10),
+            "F11" => key = Some(Code::F11),
+            "F12" => key = Some(Code::F12),
+            "F13" => key = Some(Code::F13),
+            "F14" => key = Some(Code::F14),
+            "F15" => key = Some(Code::F15),
+            "F16" => key = Some(Code::F16),
+            "F17" => key = Some(Code::F17),
+            "F18" => key = Some(Code::F18),
+            "F19" => key = Some(Code::F19),
+            "F20" => key = Some(Code::F20),
+            "F21" => key = Some(Code::F21),
+            "F22" => key = Some(Code::F22),
+            "F23" => key = Some(Code::F23),
+            "F24" => key = Some(Code::F24),
+            "SPACE" | "SPACEBAR" => key = Some(Code::Space),
+            _ if up.len() == 1 => key = Code::from_char(up.chars().next()?),
+            _ => return None,
+        }
+    }
+    Some(HotKey::new(Some(mods), key?))
+}
+
 /// 注册/切换呼出快捷键：先移除旧组合，再注册新组合
 pub fn apply_hotkey(app: &AppHandle, combo: &str) {
     hlog(&format!("apply_hotkey: combo={combo}"));
+    let _ = HK_APP.set(app.clone());
+    let manager = HK_MGR.get_or_init(|| {
+        let m = GlobalHotKeyManager::new().unwrap();
+        // 事件回调只注册一次：任何已注册热键按下都呼出主窗口
+        GlobalHotKeyEvent::set_event_handler(Some(|ev| {
+            if ev.state() == KeyState::Pressed {
+                hlog("hotkey PRESSED → toggle_main");
+                if let Some(a) = HK_APP.get() {
+                    toggle_main(a, false);
+                }
+            }
+        }));
+        m
+    });
+    let Some(mut new) = parse_combo(combo) else {
+        hlog(&format!("parse_combo 失败: {combo}"));
+        return;
+    };
     let st = app.state::<HotkeyState>();
-    let prev = st.cur.lock().unwrap().clone();
-    hlog(&format!("prev={prev:?}"));
-    if let Some(ref p) = prev {
-        if p == combo {
+    let mut cur = st.cur.lock().unwrap();
+    if let Some((old_s, old_h)) = cur.as_ref() {
+        if old_s == combo {
             hlog("same, skip");
             return;
         }
-        let _ = app.global_shortcut().unregister(p.as_str());
+        hlog(&format!("unregister old: {old_s}"));
+        let _ = manager.unregister(old_h);
     }
-    let ok = app
-        .global_shortcut()
-        .on_shortcut(combo, |app, _sc, ev| {
-            if ev.state() == ShortcutState::Pressed {
-                hlog("hotkey PRESSED → toggle_main");
-                toggle_main(app, false);
-            }
-        });
-    match ok {
+    match manager.register(&new) {
         Ok(_) => {
             hlog("register ok");
-            *st.cur.lock().unwrap() = Some(combo.to_string());
+            *cur = Some((combo.to_string(), new));
         }
         Err(e) => {
             hlog(&format!("register FAILED: {e}"));
-            let _ = app.global_shortcut().unregister(combo);
-            let _ = app
-                .global_shortcut()
-                .on_shortcut(prev.as_deref().unwrap_or("Ctrl+Alt+Z"), |app, _sc, ev| {
-                    if ev.state() == ShortcutState::Pressed {
-                        toggle_main(app, false);
-                    }
-                });
-            *st.cur.lock().unwrap() = prev;
-            let _ = settings::set_key(app, "hotkey", serde_json::json!(st.cur.lock().unwrap().clone().unwrap_or_default()));
+            let _ = manager.unregister(&new);
+            // 回滚到旧热键（如有）并回写设置
+            if let Some((old_s, old_h)) = cur.take() {
+                if manager.register(&old_h).is_ok() {
+                    *cur = Some((old_s.clone(), old_h));
+                }
+                let _ = settings::set_key(app, "hotkey", serde_json::json!(old_s));
+            } else if let Some(fallback) = parse_combo("Ctrl+Alt+Z") {
+                if manager.register(&fallback).is_ok() {
+                    *cur = Some(("Ctrl+Alt+Z".to_string(), fallback));
+                    let _ = settings::set_key(app, "hotkey", serde_json::json!("Ctrl+Alt+Z"));
+                }
+            }
         }
     }
 }
 
 /* ────────────── 系统托盘：图标 + 右击菜单 ────────────── */
+// Tauri 1（Linux webkit2gtk-4.0）：托盘用 SystemTray + SystemTrayMenu，
+// 由 Builder 在构建时注册（.system_tray/.on_menu_event/.on_system_tray_event）。
 
-fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let menu = Menu::with_items(
-        app,
-        &[
-            &MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?,
-            &MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?,
-            &MenuItem::with_id(app, "about", "关于与升级", true, None::<&str>)?,
-            &MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?,
-        ],
-    )?;
-    TrayIconBuilder::with_id("qp-tray")
-        .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("QuickCopy · 快捷拷贝")
-        .menu(&menu)
-        // 左键不弹菜单（左键仅呼出/隐藏；菜单只在右键显示）
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => toggle_main(app, true),
-            "settings" => {
-                toggle_main(app, true);
-                let _ = app.emit("qp:open-settings", ());
-            }
-            "about" => {
-                let _ = cmds::qp_show_about(app.clone());
-            }
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            // 左键单击：呼出/隐藏主界面（右键由系统弹出菜单）
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                toggle_main(tray.app_handle(), true);
-            }
-        })
-        .build(app)?;
-    Ok(())
+fn build_tray() -> SystemTray {
+    let show = CustomMenuItem::new("show".to_string(), "显示主界面");
+    let settings = CustomMenuItem::new("settings".to_string(), "设置");
+    let about = CustomMenuItem::new("about".to_string(), "关于与升级");
+    let quit = CustomMenuItem::new("quit".to_string(), "退出");
+    let tray_menu = SystemTrayMenu::new()
+        .add_item(show)
+        .add_item(settings)
+        .add_item(about)
+        .add_item(quit);
+    SystemTray::new()
+        .with_id("qp-tray")
+        .with_tooltip("QuickCopy · 快捷拷贝")
+        .with_menu(tray_menu)
 }
 
 /* ────────────── 窗口辅助 ────────────── */
 
 fn toggle_main(app: &AppHandle, show_taskbar: bool) {
-    if let Some(w) = app.get_webview_window(MAIN_LABEL) {
+    if let Some(w) = app.get_window(MAIN_LABEL) {
         hlog(&format!("toggle_main(show_taskbar={show_taskbar}): visible={:?}", w.is_visible()));
         if w.is_visible().unwrap_or(false) {
             let _ = w.set_skip_taskbar(true); // 隐藏 → 任务栏图标一并移除（只留托盘图标）
@@ -355,7 +413,7 @@ fn toggle_main(app: &AppHandle, show_taskbar: bool) {
 /* ────────────── 几何记忆 ────────────── */
 
 fn restore_geometry(app: &mut App) -> tauri::Result<()> {
-    let Some(w) = app.get_webview_window(MAIN_LABEL) else {
+    let Some(w) = app.get_window(MAIN_LABEL) else {
         return Ok(());
     };
     let geo = settings::get_key(app.handle(), GEOM_KEY).ok().flatten();
@@ -392,7 +450,7 @@ fn schedule_geom_save(app: AppHandle) {
 
 /// 立即保存主窗口几何：位置取 outer（与 set_position 同语义），尺寸取 inner（与 set_size 同语义）
 fn save_geom_now(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window(MAIN_LABEL) {
+    if let Some(w) = app.get_window(MAIN_LABEL) {
         // 最小化/隐藏期间窗口几何不代表用户布局，不保存
         if w.is_minimized().unwrap_or(true) || !w.is_visible().unwrap_or(false) {
             return;
@@ -410,8 +468,9 @@ fn save_geom_now(app: &AppHandle) {
 /// 逐项补齐：新位置缺失的项才复制，已有数据保留（可重复调用，天然幂等）。
 fn migrate_data(app: &AppHandle) {
     let new_root = paths::data_root();
-    let old = match app.path().app_data_dir() {
-        Ok(o) if o != new_root && o.exists() => o,
+    // Tauri 1：路径解析器返回 Option（v2 为 Result）
+    let old = match app.path_resolver().app_data_dir() {
+        Some(o) if o != new_root && o.exists() => o,
         _ => return,
     };
     // settings.json

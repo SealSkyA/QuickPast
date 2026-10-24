@@ -10,7 +10,7 @@ use std::time::Duration;
 use chrono::Local;
 use clipboard_rs::{Clipboard, common::RustImage};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 use crate::{paths, settings};
 
@@ -250,7 +250,7 @@ pub fn mark_last_copy(app: &AppHandle, id: u64) {
     if changed {
         save_items(app, &st.items.lock().unwrap());
     }
-    let _ = app.emit("qp:clip", serde_json::json!({ "markId": id }));
+    let _ = app.emit_all("qp:clip", serde_json::json!({ "markId": id }));
 }
 
 /// 标记"上次复制"的条目（点击历史条目复制成功后由前端调用）
@@ -381,7 +381,7 @@ pub fn spawn_watcher(app: AppHandle) {
                 }
                 save_items(&app, &st.items.lock().unwrap());
                 mark_last_copy(&app, dup.id);
-                let _ = app.emit(
+                let _ = app.emit_all(
                     "qp:clip",
                     serde_json::json!({ "item": dup, "removed": removed }),
                 );
@@ -436,7 +436,7 @@ pub fn spawn_watcher(app: AppHandle) {
         // 类别数量上限：超出时删除最早的一条，并通知前端同步移除
         let pruned = prune_by_limits(&app);
         mark_last_copy(&app, emit_item.id);
-        let _ = app.emit(
+        let _ = app.emit_all(
             "qp:clip",
             serde_json::json!({ "item": emit_item, "removed": pruned }),
         );
@@ -724,7 +724,7 @@ pub fn history_add_note(app: AppHandle, body: String) -> Result<serde_json::Valu
     let emit_item = it.clone();
     drop(items);
     save_items(&app, &st.items.lock().unwrap());
-    let _ = app.emit("qp:clip", emit_item);
+    let _ = app.emit_all("qp:clip", emit_item);
     serde_json::to_value(it).map_err(|e| e.to_string())
 }
 

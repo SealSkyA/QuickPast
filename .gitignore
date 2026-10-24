@@ -25,3 +25,4 @@ QuickPaste_v*.exe
 
 # tauri-cli 前端打包工具
 node_modules/
+/src-tauri/gen/

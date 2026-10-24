@@ -1,5 +1,5 @@
 //! 前端可调用的自定义命令（IPC）。
-//! 全局对象：window.__TAURI__.core.invoke('命令名', {参数})
+//! 全局对象（Tauri 1）：window.__TAURI__.invoke('命令名', {参数})
 
 use std::thread;
 use std::time::Duration;
@@ -78,7 +78,7 @@ pub fn qp_set_hotkey(app: AppHandle, combo: String) -> Result<(), String> {
 #[tauri::command]
 pub fn qp_window_hide(app: AppHandle) -> Result<(), String> {
     let win = app
-        .get_webview_window(crate::MAIN_LABEL)
+        .get_window(crate::MAIN_LABEL)
         .ok_or_else(|| "主窗口不存在".to_string())?;
     let _ = win.set_skip_taskbar(true); // 隐藏进托盘 → 任务栏不保留图标
     win.hide().map_err(|e| e.to_string())
@@ -152,7 +152,7 @@ pub fn qp_set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
 #[tauri::command]
 pub fn qp_show_recv(app: AppHandle) -> Result<(), String> {
     let win = app
-        .get_webview_window(crate::MAIN_LABEL)
+        .get_window(crate::MAIN_LABEL)
         .ok_or_else(|| "主窗口不存在".to_string())?;
     let _ = win.unminimize();
     let was_visible = win.is_visible().unwrap_or(false);
@@ -442,7 +442,7 @@ pub fn qp_open_url(url: String) -> Result<(), String> {
 pub fn qp_show_about(app: AppHandle) -> Result<(), String> {
     const ABOUT_LABEL: &str = "about";
     let w = app
-        .get_webview_window(ABOUT_LABEL)
+        .get_window(ABOUT_LABEL)
         .ok_or_else(|| "about 窗口不存在".to_string())?;
     let _ = w.unminimize();
     let _ = w.show();
@@ -455,14 +455,13 @@ pub fn qp_show_about(app: AppHandle) -> Result<(), String> {
 /// 主窗口点击缩略图时调用：先记录 id（供预览页轮询兜底）再 emit 事件，然后居中显示。
 #[tauri::command]
 pub fn qp_viewer_show(app: AppHandle, id: u64, name: Option<String>) -> Result<(), String> {
-    use tauri::Emitter;
     const VIEWER_LABEL: &str = "viewer";
     let w = app
-        .get_webview_window(VIEWER_LABEL)
+        .get_window(VIEWER_LABEL)
         .ok_or_else(|| "viewer 窗口不存在".to_string())?;
     // 记录当前预览图片 id（viewer 页面轮询兜底，防事件时序丢失）
     *app.state::<crate::AppState>().viewer_id.lock().unwrap() = Some(id);
-    let _ = w.emit("viewer:show", serde_json::json!({ "id": id, "name": name }));
+    let _ = w.emit_all("viewer:show", serde_json::json!({ "id": id, "name": name }));
     let _ = w.unminimize();
     let _ = w.show();
     let _ = w.center();
@@ -480,7 +479,7 @@ pub fn qp_viewer_current_id(app: AppHandle) -> Option<u64> {
 #[tauri::command]
 pub fn qp_window_toggle_max(app: AppHandle) -> Result<(), String> {
     let w = app
-        .get_webview_window(crate::MAIN_LABEL)
+        .get_window(crate::MAIN_LABEL)
         .ok_or_else(|| "主窗口不存在".to_string())?;
     if w.is_maximized().unwrap_or(false) {
         w.unmaximize().map_err(|e| e.to_string())
@@ -512,7 +511,7 @@ const MIN_H_LOGICAL: f64 = 400.0;
 #[tauri::command]
 pub fn qp_debug_resize(app: AppHandle) -> Result<(), String> {
     let window = app
-        .get_webview_window(crate::MAIN_LABEL)
+        .get_window(crate::MAIN_LABEL)
         .ok_or_else(|| "主窗口不存在".to_string())?;
     let win = window.clone();
     let base = window.outer_size().map_err(|e| e.to_string())?;
@@ -532,7 +531,7 @@ pub fn qp_debug_resize(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn qp_resize_begin(app: AppHandle, direction: String) -> Result<(), String> {
     let window = app
-        .get_webview_window(crate::MAIN_LABEL)
+        .get_window(crate::MAIN_LABEL)
         .ok_or_else(|| "主窗口不存在".to_string())?;
     let dir = direction.to_ascii_lowercase();
     if !["n", "s", "e", "w", "ne", "nw", "se", "sw"].contains(&dir.as_str()) {
@@ -638,4 +637,29 @@ pub fn qp_save_drag_files(files: Vec<DragIn>) -> Result<Vec<String>, String> {
         out.push(p.to_string_lossy().to_string());
     }
     Ok(out)
+}
+
+/* ────────────── 磁盘对话框（Tauri 1 无 dialog 插件发布，用内核 tauri::api::dialog） ────────────── */
+
+/// 系统「打开文件」对话框（多选），返回绝对路径列表（取消 → 空数组）
+#[tauri::command]
+pub fn qp_pick_files() -> Result<Vec<String>, String> {
+    let b = tauri::api::dialog::blocking::FileDialogBuilder::new();
+    Ok(b.pick_files()
+        .map(|v| v.into_iter().map(|p| p.to_string_lossy().to_string()).collect())
+        .unwrap_or_default())
+}
+
+/// 系统「选择文件夹」对话框（单选），返回绝对路径（取消 → null）
+#[tauri::command]
+pub fn qp_pick_dir() -> Result<Option<String>, String> {
+    let b = tauri::api::dialog::blocking::FileDialogBuilder::new();
+    Ok(b.pick_folder().map(|p| p.to_string_lossy().to_string()))
+}
+
+/// 系统「另存为」对话框，返回用户选择的保存路径（取消 → null）
+#[tauri::command]
+pub fn qp_pick_save() -> Result<Option<String>, String> {
+    let b = tauri::api::dialog::blocking::FileDialogBuilder::new();
+    Ok(b.save_file().map(|p| p.to_string_lossy().to_string()))
 }

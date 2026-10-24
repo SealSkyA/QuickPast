@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
 use clipboard_rs::Clipboard;
@@ -346,7 +346,7 @@ fn prune_devices(app: &AppHandle) {
 fn emit_devices(app: &AppHandle) {
     let st = app.state::<NetState>();
     let devs = st.devices.lock().unwrap().clone();
-    let _ = app.emit("qp:devices", devs);
+    let _ = app.emit_all("qp:devices", devs);
 }
 
 /* ────────────── 接收会话 ────────────── */
@@ -405,10 +405,10 @@ fn rcv_dir(app: &AppHandle) -> PathBuf {
         }
     }
     // 默认：桌面（用户可在设置中自选保存目录）
-    if let Ok(d) = app.path().desktop_dir() {
+    if let Some(d) = app.path_resolver().desktop_dir() {
         return d;
     }
-    if let Ok(d) = app.path().download_dir() {
+    if let Some(d) = app.path_resolver().download_dir() {
         return d;
     }
     // 数据存放于安装路径下（不占 C 盘 AppData）
@@ -587,7 +587,7 @@ fn handle_prepare_upload(app: AppHandle, mut req: tiny_http::Request) {
         "totalSize": total,
     });
     if !auto_accept {
-        let _ = app.emit("qp:incoming", incoming);
+        let _ = app.emit_all("qp:incoming", incoming);
     }
 
     log(&format!(
@@ -728,7 +728,7 @@ fn handle_upload(app: AppHandle, mut req: tiny_http::Request, url: &str) {
             let snap = s.files.clone();
             let alias = s.sender_alias.clone();
             drop(sess);
-            let _ = app.emit(
+            let _ = app.emit_all(
                 "qp:rcv_done",
                 serde_json::json!({"sessionId": session_id, "senderAlias": alias, "files": snap}),
             );
@@ -778,7 +778,7 @@ fn handle_upload(app: AppHandle, mut req: tiny_http::Request, url: &str) {
             let _ = file.write_all(&buf[..n]);
             hasher.update(&buf[..n]);
             written += n as u64;
-            let _ = app.emit(
+            let _ = app.emit_all(
                 "qp:rcv_progress",
                 serde_json::json!({"sessionId": session_id, "fileId": file_id, "written": written, "size": f.size}),
             );
@@ -809,7 +809,7 @@ fn handle_upload(app: AppHandle, mut req: tiny_http::Request, url: &str) {
         let snap = s.files.clone();
         let alias = s.sender_alias.clone();
         drop(sess);
-        let _ = app.emit(
+        let _ = app.emit_all(
             "qp:rcv_done",
             serde_json::json!({"sessionId": session_id, "senderAlias": alias, "files": snap}),
         );
@@ -1267,14 +1267,14 @@ pub fn send_files(
                 })?;
             drop(r);
             if let Some(a) = app {
-                let _ = a.emit(
+                let _ = a.emit_all(
                     "qp:send_progress",
                     serde_json::json!({"index": i + 1, "total": ids.len(), "file": &items[i].1}),
                 );
             }
         }
         if let Some(a) = app {
-            let _ = a.emit("qp:send_done", serde_json::json!({"device": device.alias}));
+            let _ = a.emit_all("qp:send_done", serde_json::json!({"device": device.alias}));
         }
         Ok(())
     })();
@@ -1416,7 +1416,7 @@ pub fn net_send(
     // 同步执行会占住窗口消息线程导致"未响应"。命令立即返回，进度/结果通过事件上报。
     std::thread::spawn(move || {
         if let Err(e) = send_files(Some(&app), &device, &paths, names.as_deref(), text) {
-            let _ = app.emit(
+            let _ = app.emit_all(
                 "qp:send_error",
                 serde_json::json!({"device": device.alias, "error": e}),
             );
@@ -1435,7 +1435,7 @@ pub fn net_send_text(app: AppHandle, device: Device, text: String) -> Result<(),
     // 与 net_send 同理：prepare-upload 可能等待对端确认，同步执行会卡住窗口
     std::thread::spawn(move || {
         if let Err(e) = send_text_files(Some(&app), &device, &text) {
-            let _ = app.emit(
+            let _ = app.emit_all(
                 "qp:send_error",
                 serde_json::json!({"device": device.alias, "error": e}),
             );
@@ -1495,7 +1495,7 @@ fn send_text_files(app: Option<&AppHandle>, device: &Device, text: &str) -> Resu
         })?;
     drop(r);
     if let Some(a) = app {
-        let _ = a.emit("qp:send_done", serde_json::json!({"device": device.alias}));
+        let _ = a.emit_all("qp:send_done", serde_json::json!({"device": device.alias}));
     }
     Ok(())
 }

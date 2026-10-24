@@ -1,10 +1,11 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "QuickCopy",
-  "version": "0.2.18",
-  "identifier": "com.qpaste.quickpaste",
+  "$schema": "https://schema.tauri.app/config/1",
+  "package": {
+    "productName": "QuickCopy",
+    "version": "0.2.18"
+  },
   "build": {
-    "frontendDist": "../ui"
+    "distDir": "../ui"
   },
   "app": {
     "withGlobalTauri": true,
@@ -12,7 +13,7 @@
       {
         "label": "main",
         "title": "QuickCopy",
-        "url": "index.html?v=42",
+        "url": "index.html?v=43",
         "width": 860,
         "height": 600,
         "minWidth": 600,
@@ -26,7 +27,7 @@
       {
         "label": "about",
         "title": "关于与升级",
-        "url": "about.html?v=3",
+        "url": "about.html?v=4",
         "width": 520,
         "height": 560,
         "minWidth": 420,
@@ -39,7 +40,7 @@
       {
         "label": "viewer",
         "title": "图片预览",
-        "url": "viewer.html?v=2",
+        "url": "viewer.html?v=3",
         "width": 720,
         "height": 560,
         "minWidth": 320,
@@ -52,6 +53,21 @@
     ],
     "security": {
       "csp": null
+    },
+    "allowlist": {
+      "all": false,
+      "dialog": {
+        "open": true
+      },
+      "event": {
+        "all": true
+      },
+      "globalShortcut": {
+        "all": true
+      },
+      "window": {
+        "all": true
+      }
     }
   },
   "bundle": {
