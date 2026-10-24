@@ -21,7 +21,7 @@
         "minHeight": 400,
         "resizable": true,
         "decorations": false,
-        "dragDropEnabled": true,
+        "fileDropEnabled": true,
         "center": true,
         "visible": false
       },
