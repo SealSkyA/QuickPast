@@ -161,7 +161,7 @@ pub fn qp_show_recv(app: AppHandle) -> Result<(), String> {
     let _ = win.set_focus();
     if !was_visible {
         // 托盘/隐藏态：定位到主显示器右下角（距右缘 24px、距底缘 64px 近似任务栏高度）
-        if let Ok(Some(mon)) = app.primary_monitor() {
+        if let Ok(Some(mon)) = win.primary_monitor() {
             let mpos = mon.position();
             let msz = mon.size();
             if let Ok(psz) = win.outer_size() {

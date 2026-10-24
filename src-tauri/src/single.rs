@@ -7,6 +7,8 @@ use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::time::Duration;
 
+use tauri::Manager;
+
 use tauri::AppHandle;
 
 /// 独占/唤醒端口（冷门端口，避免与应用自身协议端口冲突）

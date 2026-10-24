@@ -404,11 +404,11 @@ fn rcv_dir(app: &AppHandle) -> PathBuf {
             }
         }
     }
-    // 默认：桌面（用户可在设置中自选保存目录）
-    if let Some(d) = app.path_resolver().desktop_dir() {
+    // 默认：桌面（用户可在设置中自选保存目录）。v1 PathResolver 无桌面/下载目录 → dirs crate
+    if let Some(d) = dirs::desktop_dir() {
         return d;
     }
-    if let Some(d) = app.path_resolver().download_dir() {
+    if let Some(d) = dirs::download_dir() {
         return d;
     }
     // 数据存放于安装路径下（不占 C 盘 AppData）

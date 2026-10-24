@@ -94,17 +94,21 @@ pub fn run() {
         .manage(DownloadState::default())
         .manage(net::NetState::default())
         .system_tray(build_tray())
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => toggle_main(app, true),
-            "settings" => {
-                toggle_main(app, true);
-                let _ = app.emit_all("qp:open-settings", ());
+        .on_menu_event(|event| {
+            // v1：WindowMenuEvent 仅 1 参，经 event.window() 取 AppHandle
+            let app = event.window().app_handle();
+            match event.menu_item_id().as_ref() {
+                "show" => toggle_main(&app, true),
+                "settings" => {
+                    toggle_main(&app, true);
+                    let _ = app.emit_all("qp:open-settings", ());
+                }
+                "about" => {
+                    let _ = cmds::qp_show_about(app.clone());
+                }
+                "quit" => app.exit(0),
+                _ => {}
             }
-            "about" => {
-                let _ = cmds::qp_show_about(app.clone());
-            }
-            "quit" => app.exit(0),
-            _ => {}
         })
         .on_system_tray_event(|app, event| {
             // 左键单击：呼出/隐藏主界面（右键由系统弹出菜单）
@@ -173,18 +177,18 @@ pub fn run() {
         ])
         .setup(move |app| {
             // 数据迁移：旧版本数据在 C 盘 AppData，新版本统一存安装路径 → 一次性复制
-            migrate_data(app.handle());
+            migrate_data(&app.handle());
             // 单实例：维持独占监听，后续启动实例在此处呼出主窗口
             single::spawn_wake_listener(app.handle().clone(), listener);
             // S1 剪贴板历史：载入持久化数据（含存量去重）并启动监听
-            let loaded = history::load_items(app.handle());
+            let loaded = history::load_items(&app.handle());
             {
                 let st = app.state::<history::History>();
                 *st.items.lock().unwrap() = loaded;
             }
-            history::prune_dups(app.handle());
+            history::prune_dups(&app.handle());
             // 类别数量上限：启动时把已超限的旧数据裁剪到上限内
-            history::prune_by_limits(app.handle());
+            history::prune_by_limits(&app.handle());
             history::spawn_watcher(app.handle().clone());
             // S2 传输核心：组播发现 + HTTP 服务器
             net::spawn_discovery(app.handle().clone());
@@ -194,7 +198,7 @@ pub fn run() {
                 net::test_send(app.handle().clone(), &v);
             }
             // 呼出快捷键（支持设置页修改；默认 Ctrl+Alt+Z）
-            let hotkey = settings::get_key(app.handle(), "hotkey")
+            let hotkey = settings::get_key(&app.handle(), "hotkey")
                 .ok()
                 .flatten()
                 .and_then(|v| v.as_str().map(|s| s.to_string()))
@@ -205,8 +209,8 @@ pub fn run() {
             } else {
                 hotkey.clone()
             };
-            let _ = settings::set_key(app.handle(), "hotkey", serde_json::json!(hotkey));
-            apply_hotkey(app.handle(), &hotkey);
+            let _ = settings::set_key(&app.handle(), "hotkey", serde_json::json!(hotkey));
+            apply_hotkey(&app.handle(), &hotkey);
             restore_geometry(app)?;
             // 开机自启：静默启动（不显示主窗口，托盘/热键常驻）。
             // 仅在带 --hidden 参数启动时静默（开机自启注册表写入该参数）；手动双击启动 → 正常显示窗口。
@@ -219,20 +223,20 @@ pub fn run() {
             restore_geometry(app)?;
             Ok(())
         })
-        .on_window_event(|window, event| match event {
-            WindowEvent::Moved(_) | WindowEvent::Resized(_) if window.label() == MAIN_LABEL => {
-                schedule_geom_save(window.app_handle().clone());
+        .on_window_event(|ev| match ev.event() {
+            WindowEvent::Moved(_) | WindowEvent::Resized(_) if ev.window().label() == MAIN_LABEL => {
+                schedule_geom_save(ev.window().app_handle());
             }
             // 窗口销毁：此后所有几何保存一律跳过（退出销毁过程中读到的位置/尺寸不可靠）
-            WindowEvent::Destroyed if window.label() == MAIN_LABEL => {
-                let state = window.app_handle().state::<AppState>();
+            WindowEvent::Destroyed if ev.window().label() == MAIN_LABEL => {
+                let state = ev.window().app_handle().state::<AppState>();
                 *state.exiting.lock().unwrap() = true;
             }
             // ×/系统关闭请求：不退出应用，隐藏到系统托盘（进程常驻）
-            WindowEvent::CloseRequested { api, .. } if window.label() == MAIN_LABEL => {
+            WindowEvent::CloseRequested { api, .. } if ev.window().label() == MAIN_LABEL => {
                 api.prevent_close();
-                let _ = window.set_skip_taskbar(true);
-                let _ = window.hide();
+                let _ = ev.window().set_skip_taskbar(true);
+                let _ = ev.window().hide();
             }
             _ => {}
         });
@@ -259,8 +263,13 @@ use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 
 /// 事件回调用的 AppHandle（OnceLock：首次 apply_hotkey 时写入）
 static HK_APP: OnceLock<AppHandle> = OnceLock::new();
-/// 全局快捷键管理器（长驻保活）
-static HK_MGR: OnceLock<GlobalHotKeyManager> = OnceLock::new();
+/// 全局快捷键管理器（长驻保活）。
+/// Windows 平台 GlobalHotKeyManager 含裸指针（非 Send/Sync）→ 包一层并显式标记，
+/// 且所有调用都在 Mutex 独占下进行（apply_hotkey 本身只会串行出现）。
+struct HotkeyMgr(GlobalHotKeyManager);
+unsafe impl Send for HotkeyMgr {}
+unsafe impl Sync for HotkeyMgr {}
+static HK_MGR: OnceLock<Mutex<HotkeyMgr>> = OnceLock::new();
 
 /// 热键调试日志（%TEMP%\qp-hotkey.log）
 fn hlog(msg: &str) {
@@ -334,16 +343,16 @@ fn parse_combo(s: &str) -> Option<HotKey> {
                 'X' => Code::KeyX,
                 'Y' => Code::KeyY,
                 'Z' => Code::KeyZ,
-                '0' => Code::Number0,
-                '1' => Code::Number1,
-                '2' => Code::Number2,
-                '3' => Code::Number3,
-                '4' => Code::Number4,
-                '5' => Code::Number5,
-                '6' => Code::Number6,
-                '7' => Code::Number7,
-                '8' => Code::Number8,
-                '9' => Code::Number9,
+                '0' => Code::Digit0,
+                '1' => Code::Digit1,
+                '2' => Code::Digit2,
+                '3' => Code::Digit3,
+                '4' => Code::Digit4,
+                '5' => Code::Digit5,
+                '6' => Code::Digit6,
+                '7' => Code::Digit7,
+                '8' => Code::Digit8,
+                '9' => Code::Digit9,
                 _ => return None,
             }),
             _ => return None,
@@ -359,7 +368,7 @@ pub fn apply_hotkey(app: &AppHandle, combo: &str) {
     let manager = HK_MGR.get_or_init(|| {
         let m = GlobalHotKeyManager::new().unwrap();
         // 事件回调只注册一次：任何已注册热键按下都呼出主窗口（state 为公开字段）
-        GlobalHotKeyEvent::set_event_handler(Some(|ev| {
+        GlobalHotKeyEvent::set_event_handler(Some(|ev: GlobalHotKeyEvent| {
             if ev.state == HotKeyState::Pressed {
                 hlog("hotkey PRESSED → toggle_main");
                 if let Some(a) = HK_APP.get() {
@@ -367,12 +376,14 @@ pub fn apply_hotkey(app: &AppHandle, combo: &str) {
                 }
             }
         }));
-        m
+        Mutex::new(HotkeyMgr(m))
     });
     let Some(mut new) = parse_combo(combo) else {
         hlog(&format!("parse_combo 失败: {combo}"));
         return;
     };
+    // 管理器调用全部在 Mutex 独占下进行（HotkeyMgr 含裸指针，禁止并发触碰）
+    let mut mgr = manager.lock().unwrap();
     let st = app.state::<HotkeyState>();
     let mut cur = st.cur.lock().unwrap();
     if let Some((old_s, old_h)) = cur.as_ref() {
@@ -382,25 +393,25 @@ pub fn apply_hotkey(app: &AppHandle, combo: &str) {
         }
         hlog(&format!("unregister old: {old_s}"));
         // HotKey 为 Copy：按值传递（global-hotkey 0.9 register/unregister 均接收 owned）
-        let _ = manager.unregister(*old_h);
+        let _ = mgr.0.unregister(*old_h);
     }
     // Copy 语义：register 按值后 new 仍可用
-    match manager.register(new) {
+    match mgr.0.register(new) {
         Ok(_) => {
             hlog("register ok");
             *cur = Some((combo.to_string(), new));
         }
         Err(e) => {
             hlog(&format!("register FAILED: {e}"));
-            let _ = manager.unregister(new);
+            let _ = mgr.0.unregister(new);
             // 回滚到旧热键（如有）并回写设置
             if let Some((old_s, old_h)) = cur.take() {
-                if manager.register(old_h).is_ok() {
+                if mgr.0.register(old_h).is_ok() {
                     *cur = Some((old_s.clone(), old_h));
                 }
                 let _ = settings::set_key(app, "hotkey", serde_json::json!(old_s));
             } else if let Some(fallback) = parse_combo("Ctrl+Alt+Z") {
-                if manager.register(fallback).is_ok() {
+                if mgr.0.register(fallback).is_ok() {
                     *cur = Some(("Ctrl+Alt+Z".to_string(), fallback));
                     let _ = settings::set_key(app, "hotkey", serde_json::json!("Ctrl+Alt+Z"));
                 }
@@ -457,7 +468,7 @@ fn restore_geometry(app: &mut App) -> tauri::Result<()> {
     let Some(w) = app.get_window(MAIN_LABEL) else {
         return Ok(());
     };
-    let geo = settings::get_key(app.handle(), GEOM_KEY).ok().flatten();
+    let geo = settings::get_key(&app.handle(), GEOM_KEY).ok().flatten();
     match geo.and_then(|v| serde_json::from_value::<GeomValue>(v).ok()) {
         // 最小化/隐藏期间可能存到异常几何（-32000 偏移、极小尺寸），视为无效 → 居中
         Some(g) if g.w >= 200 && g.h >= 200 && g.x > -20000 && g.y > -20000 => {

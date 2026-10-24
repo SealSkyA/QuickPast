@@ -34,6 +34,7 @@ sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 ureq = { version = "2", default-features = false }
 local-ip-address = "0.6"
+dirs = "5"
 
 # 预留（S 阶段按需启用）：在线更新等扩展
 # tauri-plugin-updater = "2"
