@@ -255,7 +255,7 @@ pub fn run() {
 // 全局事件回调只能注册一次：经 OnceLock 的 AppHandle 调用 toggle_main。
 
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
-use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, KeyState};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 
 /// 事件回调用的 AppHandle（OnceLock：首次 apply_hotkey 时写入）
 static HK_APP: OnceLock<AppHandle> = OnceLock::new();
@@ -306,7 +306,46 @@ fn parse_combo(s: &str) -> Option<HotKey> {
             "F23" => key = Some(Code::F23),
             "F24" => key = Some(Code::F24),
             "SPACE" | "SPACEBAR" => key = Some(Code::Space),
-            _ if up.len() == 1 => key = Code::from_char(up.chars().next()?),
+            // keyboard-types Code：字母仅 KeyA..KeyZ（无 from_char），显式映射
+            _ if up.len() == 1 => key = Some(match up.chars().next()? {
+                'A' => Code::KeyA,
+                'B' => Code::KeyB,
+                'C' => Code::KeyC,
+                'D' => Code::KeyD,
+                'E' => Code::KeyE,
+                'F' => Code::KeyF,
+                'G' => Code::KeyG,
+                'H' => Code::KeyH,
+                'I' => Code::KeyI,
+                'J' => Code::KeyJ,
+                'K' => Code::KeyK,
+                'L' => Code::KeyL,
+                'M' => Code::KeyM,
+                'N' => Code::KeyN,
+                'O' => Code::KeyO,
+                'P' => Code::KeyP,
+                'Q' => Code::KeyQ,
+                'R' => Code::KeyR,
+                'S' => Code::KeyS,
+                'T' => Code::KeyT,
+                'U' => Code::KeyU,
+                'V' => Code::KeyV,
+                'W' => Code::KeyW,
+                'X' => Code::KeyX,
+                'Y' => Code::KeyY,
+                'Z' => Code::KeyZ,
+                '0' => Code::Number0,
+                '1' => Code::Number1,
+                '2' => Code::Number2,
+                '3' => Code::Number3,
+                '4' => Code::Number4,
+                '5' => Code::Number5,
+                '6' => Code::Number6,
+                '7' => Code::Number7,
+                '8' => Code::Number8,
+                '9' => Code::Number9,
+                _ => return None,
+            }),
             _ => return None,
         }
     }
@@ -319,9 +358,9 @@ pub fn apply_hotkey(app: &AppHandle, combo: &str) {
     let _ = HK_APP.set(app.clone());
     let manager = HK_MGR.get_or_init(|| {
         let m = GlobalHotKeyManager::new().unwrap();
-        // 事件回调只注册一次：任何已注册热键按下都呼出主窗口
+        // 事件回调只注册一次：任何已注册热键按下都呼出主窗口（state 为公开字段）
         GlobalHotKeyEvent::set_event_handler(Some(|ev| {
-            if ev.state() == KeyState::Pressed {
+            if ev.state == HotKeyState::Pressed {
                 hlog("hotkey PRESSED → toggle_main");
                 if let Some(a) = HK_APP.get() {
                     toggle_main(a, false);
@@ -342,24 +381,26 @@ pub fn apply_hotkey(app: &AppHandle, combo: &str) {
             return;
         }
         hlog(&format!("unregister old: {old_s}"));
-        let _ = manager.unregister(old_h);
+        // HotKey 为 Copy：按值传递（global-hotkey 0.9 register/unregister 均接收 owned）
+        let _ = manager.unregister(*old_h);
     }
-    match manager.register(&new) {
+    // Copy 语义：register 按值后 new 仍可用
+    match manager.register(new) {
         Ok(_) => {
             hlog("register ok");
             *cur = Some((combo.to_string(), new));
         }
         Err(e) => {
             hlog(&format!("register FAILED: {e}"));
-            let _ = manager.unregister(&new);
+            let _ = manager.unregister(new);
             // 回滚到旧热键（如有）并回写设置
             if let Some((old_s, old_h)) = cur.take() {
-                if manager.register(&old_h).is_ok() {
+                if manager.register(old_h).is_ok() {
                     *cur = Some((old_s.clone(), old_h));
                 }
                 let _ = settings::set_key(app, "hotkey", serde_json::json!(old_s));
             } else if let Some(fallback) = parse_combo("Ctrl+Alt+Z") {
-                if manager.register(&fallback).is_ok() {
+                if manager.register(fallback).is_ok() {
                     *cur = Some(("Ctrl+Alt+Z".to_string(), fallback));
                     let _ = settings::set_key(app, "hotkey", serde_json::json!("Ctrl+Alt+Z"));
                 }

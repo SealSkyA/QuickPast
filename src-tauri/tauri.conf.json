@@ -5,15 +5,16 @@
     "version": "0.2.18"
   },
   "build": {
-    "distDir": "../ui"
+    "distDir": "../ui",
+    "devPath": "http://localhost:1420"
   },
-  "app": {
+  "tauri": {
     "withGlobalTauri": true,
     "windows": [
       {
         "label": "main",
         "title": "QuickCopy",
-        "url": "index.html?v=43",
+        "url": "index.html",
         "width": 860,
         "height": 600,
         "minWidth": 600,
@@ -27,7 +28,7 @@
       {
         "label": "about",
         "title": "关于与升级",
-        "url": "about.html?v=4",
+        "url": "about.html",
         "width": 520,
         "height": 560,
         "minWidth": 420,
@@ -40,7 +41,7 @@
       {
         "label": "viewer",
         "title": "图片预览",
-        "url": "viewer.html?v=3",
+        "url": "viewer.html",
         "width": 720,
         "height": 560,
         "minWidth": 320,
@@ -57,28 +58,23 @@
     "allowlist": {
       "all": false,
       "dialog": {
-        "open": true
+        "open": true,
+        "save": true
       },
       "event": {
         "all": true
-      },
-      "globalShortcut": {
-        "all": true
-      },
-      "window": {
-        "all": true
       }
-    }
-  },
-  "bundle": {
-    "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
-    "windows": {
-      "nsis": {
-        "installMode": "currentUser",
-        "languages": ["SimpChinese"],
-        "installerIcon": "icons/icon.ico"
+    },
+    "bundle": {
+      "active": true,
+      "targets": ["nsis"],
+      "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
+      "windows": {
+        "nsis": {
+          "installMode": "currentUser",
+          "languages": ["SimpChinese"],
+          "installerIcon": "icons/icon.ico"
+        }
       }
     }
   }
