@@ -229,7 +229,8 @@ pub fn run() {
             }
             // 窗口销毁：此后所有几何保存一律跳过（退出销毁过程中读到的位置/尺寸不可靠）
             WindowEvent::Destroyed if ev.window().label() == MAIN_LABEL => {
-                let state = ev.window().app_handle().state::<AppState>();
+                let h = ev.window().app_handle();
+                let state = h.state::<AppState>();
                 *state.exiting.lock().unwrap() = true;
             }
             // ×/系统关闭请求：不退出应用，隐藏到系统托盘（进程常驻）
@@ -378,12 +379,12 @@ pub fn apply_hotkey(app: &AppHandle, combo: &str) {
         }));
         Mutex::new(HotkeyMgr(m))
     });
-    let Some(mut new) = parse_combo(combo) else {
+    let Some(new) = parse_combo(combo) else {
         hlog(&format!("parse_combo 失败: {combo}"));
         return;
     };
     // 管理器调用全部在 Mutex 独占下进行（HotkeyMgr 含裸指针，禁止并发触碰）
-    let mut mgr = manager.lock().unwrap();
+    let mgr = manager.lock().unwrap();
     let st = app.state::<HotkeyState>();
     let mut cur = st.cur.lock().unwrap();
     if let Some((old_s, old_h)) = cur.as_ref() {
