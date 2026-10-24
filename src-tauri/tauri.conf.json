@@ -60,9 +60,6 @@
       "dialog": {
         "open": true,
         "save": true
-      },
-      "event": {
-        "all": true
       }
     },
     "bundle": {
