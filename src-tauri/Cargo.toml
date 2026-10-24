@@ -9,6 +9,11 @@ rust-version = "1.77"
 name = "quickpaste_lib"
 crate-type = ["rlib"]
 
+# tauri build 打包（NSIS/deb）时 CLI 会传 --features custom-protocol。
+# 这是项目级 feature（tauri 1 惯例），必须在主 crate 声明。
+[features]
+custom-protocol = []
+
 [build-dependencies]
 tauri-build = { version = "1", features = [] }
 
@@ -18,7 +23,7 @@ tauri-build = { version = "1", features = [] }
 #   dialog       → tauri::api::dialog（内核自带，qp_pick_dir 命令）
 #   single 实例  → localhost 端口独占 + accept 唤醒（src/single.rs）
 #  全局快捷键    → global-hotkey crate（独立库，Win/Linux X11）
-tauri = { version = "1.7", features = ["system-tray", "icon-png", "icon-ico", "dialog-open", "dialog-save", "window-all", "custom-protocol"] }
+tauri = { version = "1.7", features = ["system-tray", "icon-png", "icon-ico", "dialog-open", "dialog-save", "window-all"] }
 global-hotkey = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
