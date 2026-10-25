@@ -59,7 +59,8 @@ jobs:
         run: npm ci
 
       - name: 构建 NSIS 安装包
-        run: npx tauri build --bundles nsis
+        # 必须显式传 --features custom-protocol，否则按 dev 模式加载 devPath，产生“无法访问此页面”
+        run: npx tauri build --features custom-protocol --bundles nsis
 
       - name: 汇总产物
         shell: bash
