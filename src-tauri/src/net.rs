@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -91,6 +92,8 @@ pub struct NetState {
     pub sessions: Mutex<HashMap<String, RcvSession>>,
     /// Web 分享会话（链接下载）：sessionId → 会话
     pub shares: Mutex<HashMap<String, ShareSession>>,
+    /// 发送取消令牌：sendId → 取消标志（发送线程持 Arc，UI「取消发送」置 true）
+    pub send_cancel: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl Default for NetState {
@@ -99,6 +102,7 @@ impl Default for NetState {
             devices: Mutex::new(Vec::new()),
             sessions: Mutex::new(HashMap::new()),
             shares: Mutex::new(HashMap::new()),
+            send_cancel: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -1127,6 +1131,74 @@ fn safe_rel_path(name: &str) -> PathBuf {
 
 /* ────────────── 发送客户端（S3 UI 复用） ────────────── */
 
+/// 读取并检查发送取消标志：置位 → 返回 Err("已取消")
+fn check_cancel(cancel: Option<&Arc<AtomicBool>>) -> Result<(), String> {
+    if cancel.map(|c| c.load(Ordering::Relaxed)).unwrap_or(false) {
+        Err("发送已取消".into())
+    } else {
+        Ok(())
+    }
+}
+
+/// 登记发送取消令牌（UI 取消时置 true）
+fn take_cancel_marker(app: &AppHandle, send_id: &str) -> Arc<AtomicBool> {
+    let marker = Arc::new(AtomicBool::new(false));
+    app.state::<NetState>()
+        .send_cancel
+        .lock()
+        .unwrap()
+        .insert(send_id.to_string(), marker.clone());
+    marker
+}
+
+/// 发送完成后移除令牌
+fn drop_cancel_marker(app: &AppHandle, send_id: &str) {
+    app.state::<NetState>()
+        .send_cancel
+        .lock()
+        .unwrap()
+        .remove(send_id);
+}
+
+/// 分块读取包装：每次 read 前检查取消标志，置位则中断上传（ureq 收到 Interrupted → transport 错误）
+struct CancelReader<R> {
+    inner: R,
+    cancel: Option<Arc<AtomicBool>>,
+}
+
+impl<R: Read> Read for CancelReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self
+            .cancel
+            .as_ref()
+            .map(|c| c.load(Ordering::Relaxed))
+            .unwrap_or(false)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "send canceled by user",
+            ));
+        }
+        self.inner.read(buf)
+    }
+}
+
+/// 尽力通知对端本会话已取消（对端清理半成品并唤醒等待）
+fn notify_cancel(app: &AppHandle, device: &Device, session_id: &str) {
+    let url = format!(
+        "http://{}:{}/api/localsend/v2/cancel?sessionId={}",
+        device.ip, device.port, session_id
+    );
+    let _ = ureq::post(&url)
+        .timeout(Duration::from_secs(5))
+        .send_string("")
+        .is_ok();
+    let _ = app.emit_all(
+        "qp:send_canceled",
+        serde_json::json!({"device": device.alias, "sessionId": session_id}),
+    );
+}
+
 /// 把一批路径展开为「真实路径 + 显示名」列表：文件直接进入；
 /// 目录递归展开，显示名为「目录名/相对路径」（接收端据此还原目录结构）。
 fn expand_send_paths(
@@ -1192,6 +1264,7 @@ pub fn send_files(
     paths: &[String],
     names: Option<&[String]>,
     text: Option<String>,
+    cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<(), String> {
     let text = text.filter(|t| !t.trim().is_empty());
     let mut items = expand_send_paths(paths, names)?;
@@ -1210,6 +1283,7 @@ pub fn send_files(
         return Err("所选内容里没有可发送的内容".into());
     }
     let result = (|| -> Result<(), String> {
+        check_cancel(cancel)?;
         let mut files_map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
         let mut ids: Vec<String> = Vec::new();
         for (path, name) in &items {
@@ -1253,17 +1327,27 @@ pub fn send_files(
 
         // 逐文件上传（流式发送，大文件不整体读入内存；文本临时文件在 items 中一并上传）
         for (i, id) in ids.iter().enumerate() {
+            check_cancel(cancel)?; // 每文件前检查取消
             let token = tokens.get(id).ok_or("对端未接受该文件")?.clone();
-            let mut f = std::fs::File::open(&items[i].0).map_err(|e| format!("打开文件失败：{e}"))?;
+            let f = std::fs::File::open(&items[i].0).map_err(|e| format!("打开文件失败：{e}"))?;
             let url = format!("{base}/upload?sessionId={session_id}&fileId={id}&token={token}");
+            // 分块取消：大文件上传中取消 → CancelReader 中断读取 → ureq transport 错误
+            let cancel = cancel.cloned();
+            let mut body = CancelReader { inner: f, cancel };
             let r = ureq::post(&url)
                 .timeout(Duration::from_secs(300))
-                .send(&mut f)
-                .map_err(|e| match e {
-                    ureq::Error::Status(code, r) => {
-                        format!("上传失败（HTTP {code}: {})", r.into_string().unwrap_or_default())
+                .send(&mut body)
+                .map_err(|e| {
+                    if check_cancel(cancel.as_ref()).is_err() {
+                        "已取消".to_string()
+                    } else {
+                        match e {
+                            ureq::Error::Status(code, r) => {
+                                format!("上传失败（HTTP {code}: {})", r.into_string().unwrap_or_default())
+                            }
+                            ureq::Error::Transport(t) => format!("上传失败：{t}"),
+                        }
                     }
-                    ureq::Error::Transport(t) => format!("上传失败：{t}"),
                 })?;
             drop(r);
             if let Some(a) = app {
@@ -1272,6 +1356,13 @@ pub fn send_files(
                     serde_json::json!({"index": i + 1, "total": ids.len(), "file": &items[i].1}),
                 );
             }
+        }
+        // 取消后向对端补发 cancel（HTTP + 本地事件），帮助对端清理半成品并唤醒等待
+        if cancel.map(|c| c.load(Ordering::Relaxed)).unwrap_or(false) {
+            if let Some(a) = app {
+                notify_cancel(a, device, &session_id);
+            }
+            return Err("已取消".into());
         }
         if let Some(a) = app {
             let _ = a.emit_all("qp:send_done", serde_json::json!({"device": device.alias}));
@@ -1330,7 +1421,7 @@ pub fn test_send(app: AppHandle, spec: &str) {
             last_seen: 0,
         };
         std::thread::sleep(std::time::Duration::from_millis(3000)); // 等服务端就绪
-        match send_files(Some(&app), &dev, &paths, None, None) {
+        match send_files(Some(&app), &dev, &paths, None, None, None) {
             Ok(()) => log("QP_SEND_TEST 发送成功"),
             Err(e) => log(&format!("QP_SEND_TEST 发送失败: {e}")),
         }
@@ -1404,6 +1495,7 @@ pub fn net_reject(app: AppHandle, session_id: String) -> Result<(), String> {
 
 /// 发送文件到指定设备（S3 界面复用）
 /// names：与 paths 对应的显示名（可选；拖放临时文件时覆盖路径截取的文件名）
+/// send_id：本次发送任务的取消令牌 id（可选；UI 提交后可用 net_cancel_send 中断）
 #[tauri::command]
 pub fn net_send(
     app: AppHandle,
@@ -1411,30 +1503,66 @@ pub fn net_send(
     paths: Vec<String>,
     names: Option<Vec<String>>,
     text: Option<String>,
+    send_id: Option<String>,
 ) -> Result<(), String> {
+    let cancel = match &send_id {
+        Some(sid) => Some(take_cancel_marker(&app, sid)),
+        None => None,
+    };
     // 后台线程执行实际发送：对端确认（最长 60s）、大文件夹展开、大文件上传都会长时间阻塞，
     // 同步执行会占住窗口消息线程导致"未响应"。命令立即返回，进度/结果通过事件上报。
     std::thread::spawn(move || {
-        if let Err(e) = send_files(Some(&app), &device, &paths, names.as_deref(), text) {
-            let _ = app.emit_all(
-                "qp:send_error",
-                serde_json::json!({"device": device.alias, "error": e}),
-            );
+        let result = send_files(Some(&app), &device, &paths, names.as_deref(), text, cancel.as_ref());
+        if let Some(sid) = &send_id {
+            drop_cancel_marker(&app, sid);
+        }
+        match result {
+            Ok(()) => {
+                // 成功事件已由 send_files 内部 emit qp:send_done（含发送方取消场景）
+            }
+            Err(e) => {
+                let _ = app.emit_all(
+                    "qp:send_error",
+                    serde_json::json!({"device": device.alias, "error": e}),
+                );
+            }
         }
     });
     Ok(())
 }
 
+/// 取消发送任务：置位对应 sendId 的取消标志，发送线程检测到后中断上传并通知对端
+#[tauri::command]
+pub fn net_cancel_send(app: AppHandle, send_id: String) -> Result<(), String> {
+    let st = app.state::<NetState>();
+    let map = st.send_cancel.lock().unwrap();
+    match map.get(&send_id) {
+        Some(c) => {
+            c.store(true, Ordering::Relaxed);
+            Ok(())
+        }
+        None => Err("该发送任务不存在或已完成".into()),
+    }
+}
+
 /// 发送纯文本到指定设备：采用 LocalSend v2 文本消息（fileType=text），
 /// 接收方直接写入系统剪贴板（对方粘贴即用），不生成实体文件。
 #[tauri::command]
-pub fn net_send_text(app: AppHandle, device: Device, text: String) -> Result<(), String> {
+pub fn net_send_text(app: AppHandle, device: Device, text: String, send_id: Option<String>) -> Result<(), String> {
     if text.is_empty() {
         return Err("文本为空".into());
     }
+    let cancel = match &send_id {
+        Some(sid) => Some(take_cancel_marker(&app, sid)),
+        None => None,
+    };
     // 与 net_send 同理：prepare-upload 可能等待对端确认，同步执行会卡住窗口
     std::thread::spawn(move || {
-        if let Err(e) = send_text_files(Some(&app), &device, &text) {
+        let result = send_text_files(Some(&app), &device, &text, cancel.as_ref());
+        if let Some(sid) = &send_id {
+            drop_cancel_marker(&app, sid);
+        }
+        if let Err(e) = result {
             let _ = app.emit_all(
                 "qp:send_error",
                 serde_json::json!({"device": device.alias, "error": e}),
@@ -1445,7 +1573,13 @@ pub fn net_send_text(app: AppHandle, device: Device, text: String) -> Result<(),
 }
 
 /// 文本发送核心（app 传 None 时跳过事件推送，供集成测试调用）
-fn send_text_files(app: Option<&AppHandle>, device: &Device, text: &str) -> Result<(), String> {
+fn send_text_files(
+    app: Option<&AppHandle>,
+    device: &Device,
+    text: &str,
+    cancel: Option<&Arc<AtomicBool>>,
+) -> Result<(), String> {
+    check_cancel(cancel)?;
     let mut files_map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
     let file_id = Uuid::new_v4().to_string();
     files_map.insert(
@@ -1494,6 +1628,13 @@ fn send_text_files(app: Option<&AppHandle>, device: &Device, text: &str) -> Resu
             ureq::Error::Transport(t) => format!("发送失败：{t}"),
         })?;
     drop(r);
+    // 文本上传完才发现被取消：补发 cancel 让对端清理（文本单包，上传中无法中断）
+    if check_cancel(cancel).is_err() {
+        if let Some(a) = app {
+            notify_cancel(a, device, &session_id);
+        }
+        return Err("已取消".into());
+    }
     if let Some(a) = app {
         let _ = a.emit_all("qp:send_done", serde_json::json!({"device": device.alias}));
     }

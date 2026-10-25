@@ -169,6 +169,7 @@ class _SendPageState extends State<SendPage> {
       Toast.show(context, '请先在附近设备中勾选目标设备');
       return;
     }
+    _svc.resetSend();
     for (final d in devs) {
       _svc.sendItems(d, List.of(_pending));
     }
@@ -310,17 +311,46 @@ class _SendPageState extends State<SendPage> {
                     border: Border(top: BorderSide(color: kLt, width: 1)),
                   ),
                   constraints: const BoxConstraints(minHeight: 38),
-                  child: Row(
+                  child: Column(
                     children: [
-                      Expanded(
-                        child: Text(
-                          '已选 ${_checked.length} 台设备',
-                          style: TextStyle(fontSize: 12, color: kMut),
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '已选 ${_checked.length} 台设备',
+                              style: TextStyle(fontSize: 12, color: kMut),
+                            ),
+                          ),
+                          NeoButton('发送', primary: true, small: true, onTap: _sendAll),
+                          const SizedBox(width: 8),
+                          NeoButton('取消', small: true, onTap: () => setState(_checked.clear)),
+                        ],
                       ),
-                      NeoButton('发送', primary: true, small: true, onTap: _sendAll),
-                      const SizedBox(width: 8),
-                      NeoButton('取消', small: true, onTap: () => setState(_checked.clear)),
+                      // 发送进度 + 取消发送（发送中显示）
+                      ValueListenableBuilder<Map<String, dynamic>?>(
+                        valueListenable: _svc.sendProgress,
+                        builder: (_, sp, __) {
+                          if (sp == null) return const SizedBox.shrink();
+                          final file = (sp['file'] as String?) ?? '';
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 10),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    '正在发送：${file.isEmpty ? '文件' : file}（${sp['index']}/${sp['total']}）',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(fontSize: 11.5, color: kMut),
+                                  ),
+                                ),
+                                NeoButton('取消发送', small: true, danger: true,
+                                    onTap: () => _svc.cancelCurrentSend()),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
                     ],
                   ),
                 ),

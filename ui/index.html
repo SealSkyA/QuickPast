@@ -215,6 +215,11 @@ input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-
 .dev:last-child{border-bottom:0;box-shadow:none}
 /* 进度条（发送/接收） */
 .xprog{margin-top:12px;display:flex;align-items:center;gap:11px}
+.xp-cancel{flex:none;border:0;background:var(--err);color:#fff;font:600 12px/1 inherit;cursor:pointer;
+  padding:6px 12px;border-radius:999px;box-shadow:var(--up-sm);transition:box-shadow .14s}
+.xp-cancel:hover{box-shadow:var(--up)}
+.xp-cancel:active{box-shadow:var(--in-sm)}
+.xp-cancel:disabled{opacity:.55;cursor:default;box-shadow:none}
 .xp-bar{flex:1;height:11px;border-radius:999px;background:var(--bg);box-shadow:var(--in);overflow:hidden;position:relative}
 .xp-bar i{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--acc);border-radius:999px;transition:width .25s}
 .xp-bar i.ok{background:var(--ok)}
@@ -491,6 +496,7 @@ button:disabled{opacity:.45;box-shadow:none}
               <div class="xprog" id="xprog" style="display:none">
                 <div class="xp-bar"><i id="xpFill"></i></div>
                 <span class="xp-txt" id="xpTxt">0/0</span>
+                <button class="xp-cancel" id="xpCancel" onclick="cancelSend()" title="中断当前发送">取消</button>
               </div>
             </div>
             <div class="xcard">
@@ -1458,9 +1464,12 @@ async function doSendTo(d){
   window.__pendingSend=(window.__pendingSend||0)+1;
   showXp(1, paths.length + (text?1:0), text ? '发送中（含文本）' : '发送中');
   try{
-    // 后端命令已改为后台线程执行、立即返回；进度/完成走 qp:send_* 事件
-    await qpInvoke('net_send',{device:d.raw, paths, names, text});
-  }catch(e){ window.__pendingSend=Math.max(0,(window.__pendingSend||0)-1); toast('发送失败：'+e, true); hideXp(); return false; }
+    // 本次发送取消令牌 id：提交后可用 net_cancel_send 中断（取消按钮 / qp:send_canceled 事件）
+    const sendId = 's'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
+    window.__curSendId = sendId;
+    // 后端命令已改为后台线程执行、立即返回；进度/完成走 qp:send_* 事件；sendId 保留到 send_done/error/canceled
+    await qpInvoke('net_send',{device:d.raw, paths, names, text, sendId});
+  }catch(e){ window.__curSendId=null; window.__pendingSend=Math.max(0,(window.__pendingSend||0)-1); toast('发送失败：'+e, true); hideXp(); return false; }
   return true;
 }
 function showXp(cur,total,label){
@@ -1468,8 +1477,28 @@ function showXp(cur,total,label){
   p.style.display='flex';
   document.getElementById('xpFill').style.width=(cur/total*100)+'%';
   document.getElementById('xpTxt').textContent=label+' '+cur+'/'+total;
+  const btn=document.getElementById('xpCancel');
+  if(btn) btn.disabled=!window.__curSendId;
 }
-function hideXp(){ document.getElementById('xprog').style.display='none'; }
+function hideXp(){
+  document.getElementById('xprog').style.display='none';
+  window.__curSendId=null;
+}
+/* 取消当前发送：置位后端取消标志 → 上传线程中断 → 对端清理半成品 */
+async function cancelSend(){
+  const sid=window.__curSendId;
+  if(!sid) return;
+  const btn=document.getElementById('xpCancel');
+  if(btn) btn.disabled=true;
+  try{
+    await qpInvoke('net_cancel_send',{sendId:sid});
+    window.__curSendId=null;
+    if(typeof toast==='function') toast('正在取消发送…');
+  }catch(e){
+    if(typeof toast==='function') toast('无可取消的发送任务');
+    hideXp();
+  }
+}
 /* 拖拽到窗口 → 预选发送（Tauri 原生拖放：拿到真实路径，文件/文件夹均可） */
 function handleDroppedPaths(paths){
   if(!paths || !paths.length) return 0;
@@ -1936,7 +1965,15 @@ renderList(); renderDevs(); loadFav();
     const p = e && e.payload;
     window.__pendingSend = Math.max(0, (window.__pendingSend||0) - 1);
     window.__pendingSendOk = false;
-    if (typeof toast === 'function') toast('发送失败：' + (p && p.error ? p.error : '未知错误'), true);
+    const err = p && p.error ? p.error : '未知错误';
+    // 用户主动取消：qp:send_canceled 已提示，这里不重复弹失败
+    if (err !== '已取消' && err !== '发送已取消' && typeof toast === 'function') toast('发送失败：' + err, true);
+  });
+  listen('qp:send_canceled', e => {
+    if (typeof hideXp === 'function') hideXp();
+    window.__pendingSend = Math.max(0, (window.__pendingSend||0) - 1);
+    const p = e && e.payload;
+    if (typeof toast === 'function') toast('已取消发送' + (p && p.device ? ' → ' + p.device : ''));
   });
 
   /* —— 设置页：保存（别名 / 呼出快捷键 / 自动保存） —— */

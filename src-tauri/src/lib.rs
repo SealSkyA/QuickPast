@@ -167,6 +167,7 @@ pub fn run() {
             net::net_reject,
             net::net_send,
             net::net_send_text,
+            net::net_cancel_send,
             net::net_share,
             net::net_set_alias,
             net::net_my_info,

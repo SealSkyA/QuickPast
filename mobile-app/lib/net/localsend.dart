@@ -75,6 +75,10 @@ class LocalSendService extends ChangeNotifier {
   final StreamController<Map<String, dynamic>> sendDone = StreamController.broadcast();
   /// 发送进度 (index, total, file)
   final ValueNotifier<Map<String, dynamic>?> sendProgress = ValueNotifier(null);
+  /// 发送取消请求（置位后上传流/循环中断，并通知对端清理半成品）
+  bool _sendCancel = false;
+  /// 活动发送的根地址记录（`base|sessionId`），取消时向对端发 HTTP cancel
+  final List<String> _sendRoots = [];
 
   RawDatagramSocket? _udp;
   Timer? _announceTimer;
@@ -550,6 +554,8 @@ class LocalSendService extends ChangeNotifier {
 
   /// 发送一批条目（文件 item 走流式上传；文本 item 走临时 .txt）
   Future<void> sendItems(Device dev, List<SendItem> items) async {
+    _sendCancel = false;
+    _sendRoots.clear();
     sendProgress.value = {'index': 0, 'total': items.length, 'file': items.first.name};
     final filesMap = <String, Map<String, dynamic>>{};
     final ids = <String>[];
@@ -580,9 +586,17 @@ class LocalSendService extends ChangeNotifier {
       sendProgress.value = null;
       return;
     }
+    // 登记活动发送根：取消时向对端发 HTTP cancel 清理半成品
+    _sendRoots.add('$base|$sessionId');
     // 逐文件上传
     var index = 0;
     for (final id in ids) {
+      if (_sendCancel) {
+        await _notifyPeerCancel();
+        sendProgress.value = null;
+        sendDone.add({'ok': false, 'device': dev.alias, 'error': '已取消', 'canceled': true});
+        return;
+      }
       index++;
       final token = tokens[id]?.toString() ?? '';
       if (token.isEmpty) {
@@ -596,17 +610,50 @@ class LocalSendService extends ChangeNotifier {
         if (it.isFileLike) {
           await _uploadFile(url, it);
         } else {
+          if (_sendCancel) throw StateError('已取消');
           await _postWithTimeout(url, it.text ?? '', const Duration(seconds: 60));
         }
         sendProgress.value = {'index': index, 'total': ids.length, 'file': it.name};
       } catch (e) {
-        sendDone.add({'ok': false, 'device': dev.alias, 'error': _mapErr(e)});
+        if (_sendCancel) {
+          await _notifyPeerCancel();
+          sendDone.add({'ok': false, 'device': dev.alias, 'error': '已取消', 'canceled': true});
+        } else {
+          sendDone.add({'ok': false, 'device': dev.alias, 'error': _mapErr(e)});
+        }
         sendProgress.value = null;
         return;
       }
     }
     sendProgress.value = null;
     sendDone.add({'ok': true, 'device': dev.alias, 'items': ids.length});
+  }
+
+  /// 新一轮发送开始前重置取消状态（UI 在 _sendAll 循环前调用）
+  void resetSend() {
+    _sendCancel = false;
+    _sendRoots.clear();
+  }
+
+  /// 取消当前正在进行的发送：中断上传流并通知对端清理半成品
+  Future<void> cancelCurrentSend() async {
+    _sendCancel = true;
+    await _notifyPeerCancel();
+  }
+
+  /// 向所有活动发送的对端发 HTTP cancel（尽力而为）
+  Future<void> _notifyPeerCancel() async {
+    final roots = List.of(_sendRoots);
+    _sendRoots.clear();
+    for (final r in roots) {
+      final sep = r.indexOf('|');
+      if (sep <= 0) continue;
+      final base = r.substring(0, sep);
+      final sid = r.substring(sep + 1);
+      try {
+        await _postWithTimeout('$base/cancel?sessionId=$sid', '', const Duration(seconds: 5));
+      } catch (_) {}
+    }
   }
 
   Future<void> sendText(Device dev, String text) async {
@@ -638,13 +685,25 @@ class LocalSendService extends ChangeNotifier {
         .timeout(const Duration(seconds: 30));
     request.contentLength = length;
     request.headers.contentType = ContentType.binary;
-    final stream = file.openRead();
-    await request.addStream(stream).timeout(const Duration(seconds: 300));
-    final resp = await request.close().timeout(const Duration(seconds: 300));
-    if (resp.statusCode != 200) {
-      throw HttpException('HTTP ${resp.statusCode}');
+    // 取消检查转发器：取消置位后在块间抛错 → addStream 失败 → 连接中断，对端清理半成品
+    final stream = file.openRead().map((chunk) {
+      if (_sendCancel) {
+        throw StateError('send canceled by user');
+      }
+      return chunk;
+    });
+    try {
+      await request.addStream(stream).timeout(const Duration(seconds: 300));
+      final resp = await request.close().timeout(const Duration(seconds: 300));
+      if (resp.statusCode != 200) {
+        throw HttpException('HTTP ${resp.statusCode}');
+      }
+      await resp.drain();
+    } catch (_) {
+      // 中断连接（addStream 已被取消流打断）
+      try { request.close(); } catch (_) {}
+      rethrow;
     }
-    await resp.drain();
   }
 
   String _mapErr(Object e) {
