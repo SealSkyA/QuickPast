@@ -12,7 +12,10 @@ crate-type = ["rlib"]
 # tauri build 打包（NSIS/deb）时 CLI 会传 --features custom-protocol。
 # 这是项目级 feature（tauri 1 惯例），必须在主 crate 声明。
 [features]
-custom-protocol = []
+# tauri build 打包（NSIS/deb）时 CLI 会传 --features custom-protocol。
+# 必须转发到 tauri/custom-protocol，否则生产构建仍按 dev 模式加载 devPath（localhost:1420），
+# 打包后窗口显示“无法访问此页面”。
+custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
 tauri-build = { version = "1", features = [] }
