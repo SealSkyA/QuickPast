@@ -51,16 +51,21 @@ class _HomeShellState extends State<HomeShell> {
     });
     _svc.sendDone.stream.listen((e) {
       final ok = e['ok'] == true;
+      final canceled = e['canceled'] == true;
       HistoryStore.instance.add(HistoryEntry(
         incoming: false,
         peerAlias: (e['device'] as String?) ?? '?',
         summary: '${e['items'] ?? 0} 个文件',
-        detail: ok ? '已发送' : '发送失败',
+        detail: canceled ? '已取消' : (ok ? '已发送' : '发送失败'),
         time: DateTime.now(),
         ok: ok,
       ));
       if (mounted) {
-        Toast.show(context, ok ? '已发送给「${e['device']}」' : '发送失败：${e['error']}');
+        if (canceled) {
+          Toast.show(context, '已取消发送给「${e['device']}」');
+        } else {
+          Toast.show(context, ok ? '已发送给「${e['device']}」' : '发送失败：${e['error']}');
+        }
       }
     });
   }
