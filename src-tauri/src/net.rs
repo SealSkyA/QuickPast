@@ -1333,7 +1333,8 @@ pub fn send_files(
             let url = format!("{base}/upload?sessionId={session_id}&fileId={id}&token={token}");
             // 分块取消：大文件上传中取消 → CancelReader 中断读取 → ureq transport 错误
             let cancel = cancel.cloned();
-            let mut body = CancelReader { inner: f, cancel };
+            // Arc 共享同一取消标志：clone 给 CancelReader，外层持有供错误分支再次检查
+            let mut body = CancelReader { inner: f, cancel: cancel.clone() };
             let r = ureq::post(&url)
                 .timeout(Duration::from_secs(300))
                 .send(&mut body)
