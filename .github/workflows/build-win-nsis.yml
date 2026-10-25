@@ -2,6 +2,8 @@ name: build-win-nsis
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 jobs:
   nsis:
