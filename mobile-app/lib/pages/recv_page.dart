@@ -18,8 +18,11 @@ class RecvPage extends StatefulWidget {
 }
 
 class _RecvPageState extends State<RecvPage> with SingleTickerProviderStateMixin {
+  // 雷达脉冲改为低频且只在就绪卡可见时驱动：无限 repeat 的 AnimatedBuilder 每帧重建
+  // 168px 圆+阴影，在 Android 上实测持续占用 ~96% CPU，把主 isolate 占满导致 HTTP
+  // server 饿死（大文件接收卡死）。静态雷达圈保留视觉，性能优先。
   late final AnimationController _rdar =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 2400))..repeat();
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 2400));
   final _searchCtrl = TextEditingController();
   String _q = '';
 
@@ -236,6 +239,16 @@ class _ProgressCard extends StatelessWidget {
               if (files.length > 1)
                 Text('文件 $finished/${files.length}', style: TextStyle(fontSize: 11.5, color: kMut)),
             ],
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerRight,
+            child: NeoButton(
+              '取消接收',
+              small: true,
+              danger: true,
+              onTap: () => LocalSendService.instance.cancelReceive(session.sessionId),
+            ),
           ),
         ],
       ),
