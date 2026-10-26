@@ -11,12 +11,15 @@ import java.io.File
 
 class MainActivity : FlutterActivity() {
     private var multicastLock: WifiManager.MulticastLock? = null
+    private var highPerfLock: WifiManager.WifiLock? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // 组播锁：Android 默认丢弃组播报文，不获取锁则收不到局域网设备广播
+        // 组播锁 + 高性能锁：Android 默认丢弃组播报文，不获取锁则收不到局域网设备广播
         // （表现为「首次能发现、后台回来搜不到」）。后台可能被系统释放，恢复前台时重取。
+        // WIFI_MODE_FULL_HIGH_PERF：传输大文件期间强制 WiFi 满功率，关闭 PSM 省电。
+        // 不设会表现为局域网 RTT 100ms+、大流量 TCP 吞吐崩溃（小米/Redmi 等 OEM 尤甚）。
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qp_wifi").setMethodCallHandler { call, result ->
             when (call.method) {
                 "acquireMulticast" -> {
@@ -29,6 +32,28 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     } catch (e: Exception) {
                         result.success(false) // 无 Wi-Fi/权限异常时静默降级（单播回执链路仍可用）
+                    }
+                }
+                "acquireHighPerf" -> {
+                    try {
+                        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                        if (highPerfLock == null) {
+                            highPerfLock = wm.createWifiLock(
+                                WifiManager.WIFI_MODE_FULL_HIGH_PERF, "QuickCopy")
+                                .apply { setReferenceCounted(false) }
+                        }
+                        highPerfLock?.acquire()
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.success(false)
+                    }
+                }
+                "releaseHighPerf" -> {
+                    try {
+                        highPerfLock?.let { if (it.isHeld) it.release() }
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.success(false)
                     }
                 }
                 else -> result.notImplemented()

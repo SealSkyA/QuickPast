@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -79,6 +80,10 @@ class LocalSendService extends ChangeNotifier {
   bool _sendCancel = false;
   /// 活动发送的根地址记录（`base|sessionId`），取消时向对端发 HTTP cancel
   final List<String> _sendRoots = [];
+  /// 接收取消标志：sessionId → true（UI 取消接收 / 对端 cancel 时置位，upload 写循环检查后删半成品）
+  final Map<String, bool> _rcvCancel = {};
+  /// 对端取消的会话（发送方收到 HTTP cancel → 中断对应上传流）
+  final Set<String> _peerCancel = {};
 
   RawDatagramSocket? _udp;
   Timer? _announceTimer;
@@ -233,6 +238,21 @@ class LocalSendService extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// WiFi 高性能锁（WIFI_MODE_FULL_HIGH_PERF）：传输大文件期间强制满功率。
+  /// 不获取时 Android PSM 省电会让局域网表现为 RTT 100ms+、大流量 TCP 吞吐崩溃。
+  /// 引用计数由原生侧管理（setReferenceCounted(false)），成对调用 acquire/release。
+  Future<void> acquireHighPerf() async {
+    try {
+      await _wifiChannel.invokeMethod('acquireHighPerf');
+    } catch (_) {}
+  }
+
+  Future<void> releaseHighPerf() async {
+    try {
+      await _wifiChannel.invokeMethod('releaseHighPerf');
+    } catch (_) {}
+  }
+
   /* ────────────── HTTP 服务（接收端） ────────────── */
 
   Future<void> _startHttp() async {
@@ -281,7 +301,11 @@ class LocalSendService extends ChangeNotifier {
       }
       if (method == 'POST' && path == '/api/localsend/v2/cancel') {
         final sid = req.uri.queryParameters['sessionId'];
-        if (sid != null) _rejectSession(sid);
+        if (sid != null) {
+          _rejectSession(sid);
+          _rcvCancel[sid] = true; // 接收中取消 → upload 写循环中断并删半成品
+          _peerCancel.add(sid); // 发送中取消 → 上传流中断
+        }
         req.response..statusCode = 200..close();
         return;
       }
@@ -304,6 +328,7 @@ class LocalSendService extends ChangeNotifier {
     final info = (v['info'] as Map<String, dynamic>?) ?? {};
     final senderIp = req.connectionInfo?.remoteAddress.address ?? '';
     final senderAlias = (info['alias'] as String?) ?? '?';
+    final senderPort = (info['port'] as num?)?.toInt() ?? kPort;
     final sessionId = _genUuid();
     final files = <IncomingFile>[];
     (v['files'] as Map).forEach((k, fv) {
@@ -313,6 +338,7 @@ class LocalSendService extends ChangeNotifier {
       sessionId: sessionId,
       senderIp: senderIp,
       senderAlias: senderAlias,
+      senderPort: senderPort,
       files: files,
       state: 'Pending',
       createdAt: DateTime.now(),
@@ -361,6 +387,7 @@ class LocalSendService extends ChangeNotifier {
     final fileId = q['fileId'];
     final token = q['token'];
     final ip = req.connectionInfo?.remoteAddress.address ?? '';
+    _log('upload enter sid=$sessionId fid=$fileId ip=$ip');
     if (sessionId == null || fileId == null || token == null) {
       _text(req, 422, 'missing params');
       return;
@@ -401,19 +428,32 @@ class LocalSendService extends ChangeNotifier {
     }
 
     // 文件落盘（流式，带大小/可选 sha256 校验）
+    _log('upload check ok, size=${f.size}');
     final dir = await _resolveSaveDir();
+    _log('upload dir=${dir.path}');
     final targetPath = _uniquePath(dir, _safeName(f.fileName));
+    _log('upload target=$targetPath');
+    await acquireHighPerf(); // 大文件落盘期间强制 WiFi 满功率（关闭 PSM 省电）
     try {
       await dir.create(recursive: true);
       final sink = File(targetPath).openWrite();
+      _log('upload sink open');
       var written = 0;
       final sha = Sha256Impl();
-      // 进度同步节流：每 chunk 都 _syncActive() 会在收到大文件时以极高频率
-      // 重建进度卡（30MB ≈ 数千次），把主 isolate 的渲染管线占满导致 socket
-      // 接收饿死（大文件上传假死）。节流到每 32 chunk 或 ≥100ms 一次即可。
+      // 进度同步节流：每 32 chunk 或 ≥100ms 一次（大文件高频重建进度卡会饿死 socket）
       var syncTick = 0;
       var lastSync = DateTime.now();
+      var rcvCanceled = false;
+      var firstChunk = true;
       await for (final chunk in req) {
+        if (firstChunk) {
+          _log('upload first chunk len=${chunk.length}');
+          firstChunk = false;
+        }
+        if (_rcvCancel[sessionId] == true) {
+          rcvCanceled = true;
+          break; // 取消接收 → 中断，下方删除半成品
+        }
         sink.add(chunk);
         sha.update(chunk);
         written += chunk.length;
@@ -423,11 +463,14 @@ class LocalSendService extends ChangeNotifier {
           lastSync = DateTime.now();
         }
       }
+      _log('upload loop end written=$written');
       await sink.flush();
       await sink.close();
-      if (f.size > 0 && written != f.size) {
-        f.state = 'Failed';
-        _text(req, 422, 'size mismatch');
+      if (rcvCanceled || (f.size > 0 && written != f.size)) {
+        // 取消接收 / 流中断：删除半成品，避免残留垃圾文件
+        try { await File(targetPath).delete(); } catch (_) {}
+        f.state = 'Canceled';
+        _text(req, 499, 'canceled');
         _maybeDone(sess);
         return;
       }
@@ -435,6 +478,7 @@ class LocalSendService extends ChangeNotifier {
         final hex = sha.digestHex();
         if (hex.toLowerCase() != f.sha256!.toLowerCase()) {
           f.state = 'Failed';
+          try { await File(targetPath).delete(); } catch (_) {}
           _text(req, 422, 'sha256 mismatch');
           _maybeDone(sess);
           return;
@@ -445,10 +489,22 @@ class LocalSendService extends ChangeNotifier {
       _text(req, 200, '');
       _maybeDone(sess);
     } catch (e) {
+      _log('upload ERROR e=$e');
       f.state = 'Failed';
       _text(req, 500, 'disk error');
       _maybeDone(sess);
+    } finally {
+      await releaseHighPerf();
     }
+  }
+
+  /// 调试日志（写文件，release 无 debugPrint 时定位问题）
+  void _log(String msg) {
+    try {
+      final f = File('/storage/emulated/0/Download/QuickCopy/qp_debug.log');
+      f.writeAsStringSync('${DateTime.now().toIso8601String()} $msg\n',
+          mode: FileMode.append);
+    } catch (_) {}
   }
 
   void _maybeDone(IncomingSession sess) {
@@ -535,6 +591,24 @@ class LocalSendService extends ChangeNotifier {
     _confirms[sessionId]?.complete(false);
   }
 
+  /// 接收中取消：中断 upload 写循环（删半成品）并通知发送方停止上传
+  Future<void> cancelReceive(String sessionId) async {
+    final sess = _sessions[sessionId];
+    if (sess == null) return;
+    _rcvCancel[sessionId] = true;
+    if (sess.state == 'Accepted' || sess.state == 'InProgress') {
+      sess.state = 'Canceled';
+      try {
+        await _postWithTimeout(
+          'http://${sess.senderIp}:${sess.senderPort}/api/localsend/v2/cancel?sessionId=$sessionId',
+          '',
+          const Duration(seconds: 5),
+        );
+      } catch (_) {}
+      _syncActive();
+    }
+  }
+
   void _rejectSession(String sessionId) {
     final sess = _sessions[sessionId];
     if (sess != null) {
@@ -556,7 +630,9 @@ class LocalSendService extends ChangeNotifier {
   Future<void> sendItems(Device dev, List<SendItem> items) async {
     _sendCancel = false;
     _sendRoots.clear();
-    sendProgress.value = {'index': 0, 'total': items.length, 'file': items.first.name};
+    await acquireHighPerf(); // 发送大文件期间强制 WiFi 满功率（关闭 PSM 省电）
+    try {
+      sendProgress.value = {'index': 0, 'total': items.length, 'file': items.first.name};
     final filesMap = <String, Map<String, dynamic>>{};
     final ids = <String>[];
     for (final it in items) {
@@ -588,13 +664,15 @@ class LocalSendService extends ChangeNotifier {
     }
     // 登记活动发送根：取消时向对端发 HTTP cancel 清理半成品
     _sendRoots.add('$base|$sessionId');
+    _peerCancel.remove(sessionId);
     // 逐文件上传
     var index = 0;
     for (final id in ids) {
-      if (_sendCancel) {
-        await _notifyPeerCancel();
+      final peerCanceled = _peerCancel.contains(sessionId);
+      if (_sendCancel || peerCanceled) {
+        if (_sendCancel) await _notifyPeerCancel();
         sendProgress.value = null;
-        sendDone.add({'ok': false, 'device': dev.alias, 'error': '已取消', 'canceled': true});
+        sendDone.add({'ok': false, 'device': dev.alias, 'error': peerCanceled ? '对端已取消' : '已取消', 'canceled': true});
         return;
       }
       index++;
@@ -608,9 +686,9 @@ class LocalSendService extends ChangeNotifier {
       final url = '$base/upload?sessionId=$sessionId&fileId=$id&token=$token';
       try {
         if (it.isFileLike) {
-          await _uploadFile(url, it);
+          await _uploadFile(url, it, sessionId, index, ids.length);
         } else {
-          if (_sendCancel) throw StateError('已取消');
+          if (_sendCancel || _peerCancel.contains(sessionId)) throw StateError('已取消');
           await _postWithTimeout(url, it.text ?? '', const Duration(seconds: 60));
         }
         sendProgress.value = {'index': index, 'total': ids.length, 'file': it.name};
@@ -618,6 +696,8 @@ class LocalSendService extends ChangeNotifier {
         if (_sendCancel) {
           await _notifyPeerCancel();
           sendDone.add({'ok': false, 'device': dev.alias, 'error': '已取消', 'canceled': true});
+        } else if (_peerCancel.contains(sessionId)) {
+          sendDone.add({'ok': false, 'device': dev.alias, 'error': '对端已取消', 'canceled': true});
         } else {
           sendDone.add({'ok': false, 'device': dev.alias, 'error': _mapErr(e)});
         }
@@ -625,14 +705,19 @@ class LocalSendService extends ChangeNotifier {
         return;
       }
     }
+    _peerCancel.remove(sessionId);
     sendProgress.value = null;
     sendDone.add({'ok': true, 'device': dev.alias, 'items': ids.length});
+    } finally {
+      await releaseHighPerf();
+    }
   }
 
   /// 新一轮发送开始前重置取消状态（UI 在 _sendAll 循环前调用）
   void resetSend() {
     _sendCancel = false;
     _sendRoots.clear();
+    _peerCancel.clear();
   }
 
   /// 取消当前正在进行的发送：中断上传流并通知对端清理半成品
@@ -677,7 +762,9 @@ class LocalSendService extends ChangeNotifier {
     }
   }
 
-  Future<void> _uploadFile(String url, SendItem it) async {
+  /// 上传单个文件：1MB 分块泵送（减少异步切换），逐块检查取消（用户/对端），
+  /// 节流上报字节进度（written/size）供发送页进度条显示
+  Future<void> _uploadFile(String url, SendItem it, String sessionId, int index, int total) async {
     final file = File(it.localPath!);
     final length = await file.length();
     final request = await HttpClient()
@@ -685,20 +772,52 @@ class LocalSendService extends ChangeNotifier {
         .timeout(const Duration(seconds: 30));
     request.contentLength = length;
     request.headers.contentType = ContentType.binary;
-    // 取消检查转发器：取消置位后在块间抛错 → addStream 失败 → 连接中断，对端清理半成品
-    final stream = file.openRead().map((chunk) {
-      if (_sendCancel) {
-        throw StateError('send canceled by user');
+    final raf = await file.open();
+    final controller = StreamController<List<int>>();
+    var written = 0;
+    var lastEmit = 0;
+    var lastEmitT = DateTime.now();
+    // 泵送循环：读取 1MB 块 → controller；取消置位后抛错中断 addStream（对端清理半成品）
+    Future<void> pump() async {
+      try {
+        while (true) {
+          if (_sendCancel || _peerCancel.contains(sessionId)) {
+            throw StateError('send canceled');
+          }
+          final chunk = await raf.read(1024 * 1024);
+          if (chunk.isEmpty) break;
+          controller.add(chunk);
+          written += chunk.length;
+          // 字节进度（节流：每 ~4MB 或 ≥200ms 上报一次，避免高频刷新 UI）
+          if (written - lastEmit >= 4 * 1024 * 1024 ||
+              DateTime.now().difference(lastEmitT).inMilliseconds >= 200) {
+            sendProgress.value = {
+              'index': index,
+              'total': total,
+              'file': it.name,
+              'written': written,
+              'size': length,
+            };
+            lastEmit = written;
+            lastEmitT = DateTime.now();
+          }
+        }
+      } catch (e) {
+        if (!controller.isClosed) controller.addError(e);
+      } finally {
+        await raf.close();
+        if (!controller.isClosed) await controller.close();
       }
-      return chunk;
-    });
+    }
+    final pumpFuture = pump();
     try {
-      await request.addStream(stream).timeout(const Duration(seconds: 300));
+      await request.addStream(controller.stream).timeout(const Duration(seconds: 300));
       final resp = await request.close().timeout(const Duration(seconds: 300));
       if (resp.statusCode != 200) {
         throw HttpException('HTTP ${resp.statusCode}');
       }
       await resp.drain();
+      await pumpFuture;
     } catch (_) {
       // 中断连接（addStream 已被取消流打断）
       try { request.close(); } catch (_) {}
