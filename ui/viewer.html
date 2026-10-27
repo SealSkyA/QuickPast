@@ -83,7 +83,8 @@ button.pri:active{box-shadow:var(--in)}
 
 <script>
 const { invoke } = window.__TAURI__;
-const win = window.__TAURI__.window.getCurrentWindow();
+// Tauri 1.8 全局 API 的当前窗口函数是 getCurrent()（getCurrentWindow 不存在，会 TypeError 使整段脚本崩溃）
+const win = window.__TAURI__.window.getCurrent();
 let currentId = 0;
 let b64 = '';
 

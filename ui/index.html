@@ -477,6 +477,9 @@ button:disabled{opacity:.45;box-shadow:none}
               <h3><svg class="ico" viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>接收进度</h3>
               <div class="chint" id="rcvTxt">准备中…</div>
               <div class="xprog"><div class="xp-bar"><i id="rcvFill"></i></div><span class="xp-txt" id="rcvPct">0%</span></div>
+              <div style="margin-top:10px;display:flex;justify-content:flex-end">
+                <button class="xp-cancel" id="rcvCancelBtn" onclick="cancelIncoming()">取消接收</button>
+              </div>
             </div>
           </div>
 
@@ -676,6 +679,9 @@ button:disabled{opacity:.45;box-shadow:none}
 <script>
 /* ═══════ 数据（S1 真实剪贴板历史，运行时由 history_load 填充） ═══════ */
 const QP = (window.__TAURI__ && window.__TAURI__.invoke) ? window.__TAURI__ : null;
+// 尽早暴露到 window：尾部初始化脚本若因早期 JS 错误未执行，trayMenu/copyOne 的
+// window.QP 判断会误走「无 Tauri」分支，导致标题栏按钮无反应
+window.QP = QP;
 function qpInvoke(cmd, args){ if(QP) return QP.invoke(cmd, args||{}); return Promise.reject('no-tauri'); }
 let DATA = [];
 let catNow = 'all', editMode = false, picked = [];
@@ -1513,15 +1519,18 @@ function handleDroppedPaths(paths){
   if(typeof toast === 'function') toast('已添加 '+n+' 个文件/文件夹，选择目标设备后发送');
   return n;
 }
-// 原生拖放：dragDropEnabled=true 后 Tauri 内部向页面 emit 'tauri://drag-drop'
-// （payload.paths 为真实路径数组，文件/文件夹均可；DOM 事件与 tauri 事件双绑定兜底）
+// 原生拖放：Tauri 1（当前）emit 'tauri://file-drop'，payload 为路径数组；
+// Tauri 2 则 emit 'tauri://drag-drop'，payload 为 {paths, position}。两者都监听兼容。
 (function bindDrag(){
   const grab = e => {
-    const p = (e && (e.payload || e.detail)) || {};
-    if(Array.isArray(p.paths)) handleDroppedPaths(p.paths);
+    const p = (e && (e.payload !== undefined ? e.payload : e.detail)) || [];
+    if(Array.isArray(p)) handleDroppedPaths(p);
+    else if(p && Array.isArray(p.paths)) handleDroppedPaths(p.paths);
   };
+  window.addEventListener('tauri://file-drop', grab);
   window.addEventListener('tauri://drag-drop', grab);
   if(window.__TAURI__ && window.__TAURI__.event){
+    window.__TAURI__.event.listen('tauri://file-drop', grab).catch(()=>{});
     window.__TAURI__.event.listen('tauri://drag-drop', grab).catch(()=>{});
   } else { setTimeout(bindDrag, 100); }
 })();
@@ -1650,7 +1659,8 @@ renderList(); renderDevs(); loadFav();
   const hasTauri = true;
   // 暴露真实环境标志：前端 window.QP 分支（复制后隐藏/托盘菜单）走真实 IPC
   window.QP = QP;
-  const curWin = () => T ? T.window.getCurrentWindow() : null;
+  // Tauri 1.8 全局 API 的当前窗口函数是 getCurrent()（getCurrentWindow 不存在，会 TypeError）
+  const curWin = () => T ? T.window.getCurrent() : null;
 
   /* 无边框窗口拖拽区（按钮/标签不触发拖拽） */
   document.querySelectorAll('.titlebar').forEach(el => {
@@ -1673,14 +1683,11 @@ renderList(); renderDevs(); loadFav();
     T.invoke('qp_resize_begin', { direction: d }).catch(() => {});
   });
 
-  /* —— 窗口控制：真实动作，原型降级兜底 —— */
-  const _origTrayMenu = window.trayMenu;
-  window.trayMenu = async function (act) {
-    const w = await curWin();
-    if (!w) return _origTrayMenu && _origTrayMenu(act);
-    if (act === 'min') await w.minimize();
-    else if (act === 'max') await w.toggleMaximize();
-    else if (act === 'close') await w.close(); /* 直接关闭退出 */
+  /* —— 窗口控制：走 Rust 命令（主窗口专用），语义与第 1 块一致：×=隐藏到托盘 —— */
+  window.trayMenu = function (act) {
+    if (act === 'close') { qpInvoke('qp_window_hide').catch(()=>{}); }
+    else if (act === 'max') { qpInvoke('qp_window_toggle_max').catch(()=>{}); }
+    else if (act === 'min') { qpInvoke('qp_window_minimize').catch(()=>{}); }
   };
 
   /* —— 置顶：真实置顶 + 持久化 —— */
@@ -1924,6 +1931,18 @@ renderList(); renderDevs(); loadFav();
     }).catch(e => { if (typeof toast === 'function') toast('拒绝失败：' + e, true); });
     showNextIncoming();
   };
+  /* 接收中取消：中断上传流（对端停止发送并清理半成品） */
+  window.cancelIncoming = function () {
+    const si = window.__curRcvSession || (typeof window.__incSession === 'string') ? window.__incSession : '';
+    const btn = document.getElementById('rcvCancelBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '正在取消…'; }
+    T.invoke('net_cancel_rcv', { sessionId: si }).then(() => {
+      if (typeof toast === 'function') toast('已取消接收，残留文件已清理');
+    }).catch(e => {
+      if (typeof toast === 'function') toast('取消接收失败：' + e, true);
+      if (btn) { btn.disabled = false; btn.textContent = '取消接收'; }
+    });
+  };
   listen('qp:rcv_progress', e => {
     const p = e && e.payload; if (!p) return;
     const c = document.getElementById('rcvCard'); if (c) c.style.display = '';
@@ -1933,9 +1952,21 @@ renderList(); renderDevs(); loadFav();
     if (f && pct && p.size > 0) {
       const v = Math.min(100, Math.round(p.written / p.size * 100));
       f.style.width = v + '%'; pct.textContent = v + '%';
-    }
+}
+  });
+  /* 接收被取消：隐藏进度卡、复位按钮、放行队列 */
+  listen('qp:rcv_canceled', e => {
+    window.__curRcvSession = '';
+    const c = document.getElementById('rcvCard'); if (c) c.style.display = 'none';
+    const f = document.getElementById('rcvFill'); if (f) f.style.width = '0';
+    const pct = document.getElementById('rcvPct'); if (pct) pct.textContent = '0%';
+    const btn = document.getElementById('rcvCancelBtn');
+    if (btn) { btn.disabled = false; btn.textContent = '取消接收'; }
+    window.__incBusy = false;
+    showNextIncoming();
   });
   listen('qp:rcv_done', e => {
+    window.__curRcvSession = '';
     const c = document.getElementById('rcvCard'); if (c) c.style.display = 'none';
     const f = document.getElementById('rcvFill'); if (f) f.style.width = '0';
     const pf = (e && e.payload && e.payload.files) || [];

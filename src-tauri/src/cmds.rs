@@ -84,6 +84,15 @@ pub fn qp_window_hide(app: AppHandle) -> Result<(), String> {
     win.hide().map_err(|e| e.to_string())
 }
 
+/// 主窗口最小化（标题栏按钮）
+#[tauri::command]
+pub fn qp_window_minimize(app: AppHandle) -> Result<(), String> {
+    let w = app
+        .get_window(crate::MAIN_LABEL)
+        .ok_or_else(|| "主窗口不存在".to_string())?;
+    w.minimize().map_err(|e| e.to_string())
+}
+
 /// 开机自启开关：写入设置并立即生效。Windows 写注册表 Run 键；Linux（麒麟/UOS）写
 /// XDG autostart 的 .desktop（~/.config/autostart/），两个发行版都遵循标准。
 /// 自启启动附带 --hidden 参数 → 开机时静默运行（托盘常驻）；手动双击启动仍正常显示窗口。
@@ -91,8 +100,32 @@ pub fn qp_window_hide(app: AppHandle) -> Result<(), String> {
 pub fn qp_set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
     #[cfg(windows)]
     {
+        // 清理历史遗留的旧名称自启项（QuickPaste 品牌改名前的残留）：
+        // 改名前写入的值名是 QuickPaste，指向的 exe 路径已失效/被覆盖，
+        // 不清理会造成开机尝试启动失效路径、多实例并存等“时好时坏”现象。
+        let _ = std::process::Command::new("reg")
+            .args([
+                "delete",
+                "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                "/v",
+                "QuickPaste",
+                "/f",
+            ])
+            .output();
         if on {
-            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            // 优先使用安装目录的正式程序（NSIS currentUser：%LOCALAPPDATA%\QuickCopy\QuickCopy.exe），
+            // 该路径稳定、不会被 cargo 构建清理；只有在未安装时才回退到 current_exe
+            // （如开发模式直接跑 target/release 产物）。否则自启项指向构建产物目录，
+            // 一旦重新构建/清理就失效，造成开机自启“时好时坏”。
+            let exe = {
+                let installed = std::env::var("LOCALAPPDATA").ok().map(|d| {
+                    std::path::PathBuf::from(d).join("QuickCopy").join("QuickCopy.exe")
+                }).filter(|p| p.exists());
+                match installed {
+                    Some(p) => p,
+                    None => std::env::current_exe().map_err(|e| e.to_string())?,
+                }
+            };
             let cmd = format!("\"{}\" --hidden", exe.to_string_lossy());
             let out = std::process::Command::new("reg")
                 .args([
@@ -440,9 +473,8 @@ pub fn qp_open_url(url: String) -> Result<(), String> {
 /// 显示"关于与升级"独立窗口（tauri.conf 静态声明，启动时已创建，屏幕居中）。
 #[tauri::command]
 pub fn qp_show_about(app: AppHandle) -> Result<(), String> {
-    const ABOUT_LABEL: &str = "about";
     let w = app
-        .get_window(ABOUT_LABEL)
+        .get_window(crate::ABOUT_LABEL)
         .ok_or_else(|| "about 窗口不存在".to_string())?;
     let _ = w.unminimize();
     let _ = w.show();
@@ -486,6 +518,37 @@ pub fn qp_window_toggle_max(app: AppHandle) -> Result<(), String> {
     } else {
         w.maximize().map_err(|e| e.to_string())
     }
+}
+
+/// 关于窗口：最小化（标题栏按钮，走 Rust 命令而非前端 window API）
+#[tauri::command]
+pub fn qp_about_minimize(app: AppHandle) -> Result<(), String> {
+    let w = app
+        .get_window(crate::ABOUT_LABEL)
+        .ok_or_else(|| "关于窗口不存在".to_string())?;
+    w.minimize().map_err(|e| e.to_string())
+}
+
+/// 关于窗口：最大化 / 还原
+#[tauri::command]
+pub fn qp_about_toggle_max(app: AppHandle) -> Result<(), String> {
+    let w = app
+        .get_window(crate::ABOUT_LABEL)
+        .ok_or_else(|| "关于窗口不存在".to_string())?;
+    if w.is_maximized().unwrap_or(false) {
+        w.unmaximize().map_err(|e| e.to_string())
+    } else {
+        w.maximize().map_err(|e| e.to_string())
+    }
+}
+
+/// 关于窗口：隐藏（关闭按钮语义 = 隐藏到托盘，进程常驻）
+#[tauri::command]
+pub fn qp_about_hide(app: AppHandle) -> Result<(), String> {
+    let w = app
+        .get_window(crate::ABOUT_LABEL)
+        .ok_or_else(|| "关于窗口不存在".to_string())?;
+    w.hide().map_err(|e| e.to_string())
 }
 
 #[cfg(windows)]

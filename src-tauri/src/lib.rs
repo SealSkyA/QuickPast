@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use tauri::{App, AppHandle, CustomMenuItem, Manager, PhysicalPosition, PhysicalSize, Position, RunEvent, Size, SystemTray, SystemTrayEvent, SystemTrayMenu, WindowEvent};
 
 pub const MAIN_LABEL: &str = "main";
+pub const ABOUT_LABEL: &str = "about";
 const GEOM_KEY: &str = "window.geometry";
 const GEOM_DEBOUNCE_MS: u64 = 900;
 
@@ -94,13 +95,15 @@ pub fn run() {
         .manage(DownloadState::default())
         .manage(net::NetState::default())
         .system_tray(build_tray())
-        .on_menu_event(|event| {
-            // v1：WindowMenuEvent 仅 1 参，经 event.window() 取 AppHandle
-            let app = event.window().app_handle();
-            match event.menu_item_id().as_ref() {
-                "show" => toggle_main(&app, true),
+        .on_system_tray_event(|app, event| match event {
+            // 左键单击：呼出/隐藏主界面（右键由系统弹出菜单）
+            SystemTrayEvent::LeftClick { .. } => toggle_main(app, true),
+            // 托盘右键菜单项点击（Tauri 1 走 SystemTrayEvent::MenuItemClick，
+            // 不是 on_menu_event——后者只收窗口菜单事件，放在那托盘菜单会全部无反应）
+            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_ref() {
+                "show" => toggle_main(app, true),
                 "settings" => {
-                    toggle_main(&app, true);
+                    toggle_main(app, true);
                     let _ = app.emit_all("qp:open-settings", ());
                 }
                 "about" => {
@@ -108,13 +111,8 @@ pub fn run() {
                 }
                 "quit" => app.exit(0),
                 _ => {}
-            }
-        })
-        .on_system_tray_event(|app, event| {
-            // 左键单击：呼出/隐藏主界面（右键由系统弹出菜单）
-            if let SystemTrayEvent::LeftClick { .. } = event {
-                toggle_main(app, true);
-            }
+            },
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             cmds::get_setting,
@@ -127,6 +125,7 @@ pub fn run() {
             cmds::qp_debug_resize,
             cmds::qp_set_hotkey,
             cmds::qp_window_hide,
+            cmds::qp_window_minimize,
             cmds::qp_show_recv,
             cmds::qp_set_autostart,
             cmds::qp_window_toggle_max,
@@ -137,6 +136,9 @@ pub fn run() {
             cmds::qp_install_update,
             cmds::qp_open_url,
             cmds::qp_show_about,
+            cmds::qp_about_minimize,
+            cmds::qp_about_toggle_max,
+            cmds::qp_about_hide,
             cmds::qp_viewer_show,
             cmds::qp_viewer_current_id,
             history::history_load,
@@ -165,6 +167,7 @@ pub fn run() {
             net::net_save_dir,
             net::net_accept,
             net::net_reject,
+            net::net_cancel_rcv,
             net::net_send,
             net::net_send_text,
             net::net_cancel_send,
@@ -212,7 +215,11 @@ pub fn run() {
             };
             let _ = settings::set_key(&app.handle(), "hotkey", serde_json::json!(hotkey));
             apply_hotkey(&app.handle(), &hotkey);
-            restore_geometry(app)?;
+            // 窗口圆角：Tauri 1 无边框窗口在 Win11 默认直角，恢复旧版 Tauri 2 的系统圆角外观
+            #[cfg(windows)]
+            if let Some(w) = app.get_window(MAIN_LABEL) {
+                apply_win_round_corners(&w);
+            }
             // 开机自启：静默启动（不显示主窗口，托盘/热键常驻）。
             // 仅在带 --hidden 参数启动时静默（开机自启注册表写入该参数）；手动双击启动 → 正常显示窗口。
             if std::env::args().any(|a| a == "--hidden") {
@@ -220,8 +227,11 @@ pub fn run() {
                     let _ = w.set_skip_taskbar(true);
                     let _ = w.hide();
                 }
+            } else {
+                // 非静默启动才恢复窗口几何并显示（restore_geometry 尾部有 show()，
+                // 若在 --hidden 后再调用会把刚隐藏的窗口又拉起，导致开机自启不静默）。
+                restore_geometry(app)?;
             }
-            restore_geometry(app)?;
             Ok(())
         })
         .on_window_event(|ev| match ev.event() {
@@ -461,6 +471,34 @@ fn toggle_main(app: &AppHandle, show_taskbar: bool) {
         }
     } else {
         hlog("toggle_main: main window NOT FOUND");
+    }
+}
+
+/* ────────────── 窗口圆角（Windows） ────────────── */
+
+/// Tauri 1 的无边框窗口（decorations:false）在 Windows 11 下默认是直角
+/// （DWM corner preference 为 DEFAULT，DWM 对无边框窗口不自动圆角），
+/// 而旧版 Tauri 2 构建默认自带系统圆角。这里显式把窗口四角设为 ROUND，
+/// 恢复与旧版一致的圆角外观。Win11 22H2+ 支持（更老系统该属性调用
+/// 返回 E_INVALIDARG，忽略即可，不影响启动）。
+#[cfg(windows)]
+fn apply_win_round_corners(w: &tauri::Window) {
+    #[link(name = "dwmapi")]
+    unsafe extern "system" {
+        fn DwmSetWindowAttribute(hwnd: isize, attr: u32, pv: *const u32, cb: u32) -> i32;
+    }
+    // DWMWA_WINDOW_CORNER_PREFERENCE = 33，DWMWCP_ROUND = 2
+    let corner: u32 = 2;
+    unsafe {
+        // tauri Window::hwnd() 返回 windows crate 的 HWND(pub *mut c_void)
+        if let Ok(hwnd) = w.hwnd() {
+            let _ = DwmSetWindowAttribute(
+                hwnd.0 as isize,
+                33,
+                &corner as *const u32,
+                std::mem::size_of::<u32>() as u32,
+            );
+        }
     }
 }
 

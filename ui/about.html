@@ -90,8 +90,9 @@ button.pri:active{box-shadow:var(--in)}
   <div class="toast" id="toast"></div>
 
 <script>
-const { invoke } = window.__TAURI__;
-const win = window.__TAURI__.window.getCurrentWindow();
+// 统一 IPC 封装：__TAURI__ 缺失时安全降级（避免整段脚本崩溃导致按钮/版本/更新全失效）
+const TA = window.__TAURI__;
+function qpI(cmd, args){ if(TA && TA.invoke) return TA.invoke(cmd, args||{}); return Promise.reject('no-tauri'); }
 function toast(msg, err){
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -100,11 +101,12 @@ function toast(msg, err){
   clearTimeout(t._tm);
   t._tm = setTimeout(()=>t.classList.remove('on'), 2600);
 }
-function winMin(){ win.minimize().catch(()=>{}); }
-function winMax(){ win.toggleMaximize().catch(()=>{}); }
-function closeWin(){ win.hide().catch(()=>{}); }
+// 标题栏按钮：走 Rust 命令控制 about 窗口（不依赖前端 window API，Tauri 1 下更可靠）
+function winMin(){ qpI('qp_about_minimize').catch(()=>{}); }
+function winMax(){ qpI('qp_about_toggle_max').catch(()=>{}); }
+function closeWin(){ qpI('qp_about_hide').catch(()=>{}); }
 // 载入关于信息
-invoke('about_info').then(info=>{
+qpI('about_info').then(info=>{
   const v = document.getElementById('awVer'); if(v && info) v.textContent = info.version || '';
   const log = document.getElementById('awLog');
   if(log && info && Array.isArray(info.changelog)){
@@ -134,7 +136,7 @@ function setProg(p){
 function checkUpdate(){
   if(busy) return;
   busy = true; setBtn('检查中…', true);
-  invoke('qp_check_update')
+  qpI('qp_check_update')
     .then(r=>{
       busy = false;
       if(r && r.hasUpdate){
@@ -157,15 +159,15 @@ function downloadUpdate(){
   if(busy || !upd) return;
   if(!upd.assetUrl){
     toast('该版本未附带安装包，请前往发布页手动下载', true);
-    setTimeout(()=>invoke('qp_open_url',{url:'https://github.com/SealSkyA/QuickPast/releases'}).catch(()=>{}), 1200);
+    setTimeout(()=>qpI('qp_open_url',{url:'https://github.com/SealSkyA/QuickPast/releases'}).catch(()=>{}), 1200);
     return;
   }
   busy = true; setBtn('下载中…', true); setProg(0);
   // 异步下载：立即返回（后台线程 + 镜像加速），进度轮询 qp_download_progress
-  invoke('qp_download_update',{url:upd.assetUrl, name:upd.assetName, size:upd.assetSize||0})
+  qpI('qp_download_update',{url:upd.assetUrl, name:upd.assetName, size:upd.assetSize||0})
     .then(()=>{
       const tm = setInterval(()=>{
-        invoke('qp_download_progress').then(p=>{
+        qpI('qp_download_progress').then(p=>{
           if(!p) return;
           if(p.phase === 'done'){
             clearInterval(tm); busy = false; downloaded = p.path;
@@ -190,7 +192,7 @@ function downloadUpdate(){
 function installUpdate(){
   if(!downloaded) return;
   busy = true; setBtn('正在启动安装…', true);
-  invoke('qp_install_update',{path:downloaded})
+  qpI('qp_install_update',{path:downloaded})
     .then(()=>toast('已启动安装向导'))
     .catch(e=>{ busy = false; setBtn('点击安装', false); toast('启动安装失败：'+(e||''), true); });
 }
