@@ -559,7 +559,7 @@ button:disabled{opacity:.45;box-shadow:none}
         <div class="row"><div class="lbl"><b>呼出快捷键</b><span>点击输入框后按下新的组合键录制</span></div><div class="ctl"><input type="text" id="hotkeyInput" value="Ctrl+Alt+Z" placeholder="点击后按组合键" onfocus="hotkeyFocus(this)" onkeydown="hotkeyKeydown(event)" onblur="hotkeyBlur()" style="width:132px;text-align:center;font-family:ui-monospace,monospace"></div></div>
         <div class="row"><div class="lbl"><b>图片数量上限</b><span>图片历史最多保留的条数，超出删最早</span></div><div class="ctl"><input type="number" id="imgLimitSel" value="200" min="20" max="1000"></div></div>
         <div class="row"><div class="lbl"><b>文件数量上限</b><span>文件历史最多保留的条数，超出删最早</span></div><div class="ctl"><input type="number" id="fileLimitSel" value="100" min="20" max="1000"></div></div>
-        <div class="row"><div class="lbl"><b>单击行为</b><span>点击历史卡片后的动作</span></div><div class="ctl"><select><option>复制并粘贴</option><option>仅复制至剪切板</option></select></div></div>
+        <div class="row"><div class="lbl"><b>单击行为</b><span>点击历史卡片后的动作；「复制并粘贴」会隐藏窗口并粘到呼出前的光标位置</span></div><div class="ctl"><select id="clickBehaviorSel" onchange="clickBehaviorChange()"><option value="paste">复制并粘贴</option><option value="copy">仅复制至剪切板</option></select></div></div>
         <div class="row"><div class="lbl"><b>默认分类</b><span>启动时定位到该分类（默认全部）</span></div><div class="ctl"><select id="defCatSel"><option value="all">全部</option><option value="text">文字</option><option value="img">图片</option><option value="file">文件</option><option value="fav">收藏</option><option value="note">便签</option></select></div></div>
         <div class="row"><div class="lbl"><b>页面字号</b><span>界面文字大小（12 – 20）</span></div><div class="ctl"><input type="number" id="fontSizeSel" value="14" min="12" max="20"></div></div>
         <div class="row"><div class="lbl"><b>开机自启</b><span>登录 Windows 后自动启动</span></div><div class="ctl"><label class="sw"><input type="checkbox" id="bootSel" onchange="bootChange()"><i></i></label></div></div>
@@ -1026,9 +1026,18 @@ function unpinOne(id){
 function copyOne(id){
   const d=DATA.find(x=>x.id===id); if(!d)return;
   // 复制成功后自动隐藏到托盘（窗口置顶/批量编辑时不隐藏）；复制成功不弹提示（点击即复制）
+  // 单击行为「复制并粘贴」：text/img 隐藏后自动粘到呼出前光标位置；file 不支持仅复制。
+  // 窗口置顶时也仅复制不粘走焦点。
   const hideAfter=()=>{
     const pinOn=document.getElementById('wPin').classList.contains('on');
-    if(!editMode && !pinOn && window.QP){ qpInvoke('qp_window_hide').catch(()=>{}); }
+    if(!editMode && !pinOn && window.QP){
+      const beh=(document.getElementById('clickBehaviorSel')||{}).value || 'copy';
+      if(beh==='paste' && (d.cat==='text'||d.cat==='img')){
+        qpInvoke('qp_paste_pending',{contentKind:d.cat}).catch(()=>{ qpInvoke('qp_window_hide').catch(()=>{}); });
+      } else {
+        qpInvoke('qp_window_hide').catch(()=>{});
+      }
+    }
   };
   // 复制成功后标记该条为"上次复制"（图标染黄；不改变列表位置）
   const markAndHide=()=>{ qpInvoke('history_mark_last',{id}).catch(()=>{}); hideAfter(); };
@@ -1821,6 +1830,19 @@ renderList(); renderDevs(); loadFav();
     const el = document.querySelector('.rail-item[data-cat="' + c + '"]');
     if (el && typeof switchCat === 'function') switchCat(el);
   }).catch(() => {});
+  /* —— 单击行为：设置值回填（默认复制并粘贴） —— */
+  T.invoke('get_setting', { key: 'clickBehavior' }).then(v => {
+    const el = document.getElementById('clickBehaviorSel');
+    if (el && (v === 'paste' || v === 'copy')) el.value = v;
+  }).catch(() => {});
+  /* —— 单击行为：切换即时保存 —— */
+  window.clickBehaviorChange = function () {
+    const el = document.getElementById('clickBehaviorSel');
+    if (!el) return;
+    const v = el.value;
+    T.invoke('set_setting', { key: 'clickBehavior', value: v }).catch(() => {});
+    if (typeof toast === 'function') toast(v === 'paste' ? '单击将自动粘贴到呼出前光标位置' : '单击仅复制到剪贴板');
+  };
   /* —— 页面字号：启动时应用 —— */
   T.invoke('get_setting', { key: 'fontSize' }).then(v => {
     if (typeof applyFontSize === 'function') applyFontSize(typeof v === 'number' ? v : 14);
@@ -2031,6 +2053,9 @@ renderList(); renderDevs(); loadFav();
     // 默认分类
     const dc = document.getElementById('defCatSel');
     if (dc) T.invoke('set_setting', { key: 'defaultCat', value: dc.value }).catch(() => {});
+    // 单击行为（切换时已即时保存，这里兜底再存一次）
+    const cbSel = document.getElementById('clickBehaviorSel');
+    if (cbSel) T.invoke('set_setting', { key: 'clickBehavior', value: cbSel.value }).catch(() => {});
     // 页面字号
     const fs = document.getElementById('fontSizeSel');
     if (fs && fs.value) {

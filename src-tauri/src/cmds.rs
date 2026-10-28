@@ -93,6 +93,14 @@ pub fn qp_window_minimize(app: AppHandle) -> Result<(), String> {
     w.minimize().map_err(|e| e.to_string())
 }
 
+/// 单击行为「复制并粘贴」：复制完成后隐藏主窗口，并把剪贴板内容自动粘贴到
+/// 呼出窗口前光标所在位置（text/img 走自动粘贴；file 不支持 → 仅复制）。
+#[tauri::command]
+pub fn qp_paste_pending(app: AppHandle, content_kind: String) -> Result<(), String> {
+    crate::do_paste_back(&app, &content_kind);
+    Ok(())
+}
+
 /// 开机自启开关：写入设置并立即生效。Windows 写注册表 Run 键；Linux（麒麟/UOS）写
 /// XDG autostart 的 .desktop（~/.config/autostart/），两个发行版都遵循标准。
 /// 自启启动附带 --hidden 参数 → 开机时静默运行（托盘常驻）；手动双击启动仍正常显示窗口。

@@ -126,6 +126,7 @@ pub fn run() {
             cmds::qp_set_hotkey,
             cmds::qp_window_hide,
             cmds::qp_window_minimize,
+            cmds::qp_paste_pending,
             cmds::qp_show_recv,
             cmds::qp_set_autostart,
             cmds::qp_window_toggle_max,
@@ -462,6 +463,8 @@ fn toggle_main(app: &AppHandle, show_taskbar: bool) {
             let r = w.hide();
             hlog(&format!("hide → {:?}", r));
         } else {
+            // 「复制并粘贴」：记录呼出前的输入上下文（前台窗口+光标），必须在本窗口 show 之前
+            snapshot_last_input();
             let _ = w.unminimize(); // 从任务栏/最小化状态还原
             let _ = w.show();
             // 快捷键呼出：任务栏不显示图标（只留托盘）；单击托盘呼出：任务栏图标正常显示
@@ -471,6 +474,159 @@ fn toggle_main(app: &AppHandle, show_taskbar: bool) {
         }
     } else {
         hlog("toggle_main: main window NOT FOUND");
+    }
+}
+
+/* ────────────── 单击行为：复制并粘贴（Windows） ────────────── */
+
+/// 呼出主窗口前记录的上文：之前的前台窗口 + 鼠标屏幕坐标。
+/// 「单击行为=复制并粘贴」时用它在复制完成后把焦点还给原窗口并模拟 Ctrl+V，
+/// 效果 = 把历史内容直接粘到用户呼出前光标所在位置。
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+pub struct InputCtx {
+    pub hwnd: isize,
+    pub x: i32,
+    pub y: i32,
+}
+
+#[cfg(windows)]
+pub static LAST_INPUT: Mutex<Option<InputCtx>> = Mutex::new(None);
+
+/// 记录「呼出窗口前」的输入上下文。必须在 show()+set_focus() 之前调用，
+/// 否则 GetForegroundWindow 取到的是本窗口，粘贴目标就错了。
+#[cfg(windows)]
+pub fn snapshot_last_input() {
+    #[repr(C)]
+    struct POINT {
+        x: i32,
+        y: i32,
+    }
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetForegroundWindow() -> isize;
+        fn GetCursorPos(lpPoint: *mut POINT) -> i32;
+    }
+    let mut pt = POINT { x: 0, y: 0 };
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg != 0 && GetCursorPos(&mut pt) != 0 {
+            *LAST_INPUT.lock().unwrap() = Some(InputCtx { hwnd: fg, x: pt.x, y: pt.y });
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn snapshot_last_input() {}
+
+#[cfg(windows)]
+fn is_hwnd_alive(hwnd: isize) -> bool {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn IsWindow(hWnd: isize) -> i32;
+    }
+    unsafe { IsWindow(hwnd) != 0 }
+}
+
+/// 把前台交给指定窗口：AttachThreadInput（同窗口线程树）+ 模拟一次 Alt 键
+/// 绕过 Windows 前台锁定，随后再 SetForegroundWindow 双保险。
+#[cfg(windows)]
+fn force_foreground(hwnd: isize) {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetForegroundWindow() -> isize;
+        fn GetWindowThreadProcessId(hwnd: isize, lpdwProcessId: *mut u32) -> u32;
+        fn AttachThreadInput(idAttach: u32, idAttachTo: u32, fAttach: i32) -> i32;
+        fn SetForegroundWindow(hwnd: isize) -> i32;
+        fn SetActiveWindow(hwnd: isize) -> isize;
+        fn keybd_event(bVk: u8, bScan: u8, dwFlags: u32, dwExtraInfo: usize);
+    }
+    unsafe {
+        let fg = GetForegroundWindow();
+        let t1 = GetWindowThreadProcessId(fg, std::ptr::null_mut());
+        let t2 = GetWindowThreadProcessId(hwnd, std::ptr::null_mut());
+        if t1 != 0 && t2 != 0 && t1 != t2 {
+            let _ = AttachThreadInput(t1, t2, 1);
+            let _ = SetForegroundWindow(hwnd);
+            let _ = AttachThreadInput(t1, t2, 0);
+        }
+        let _ = SetForegroundWindow(hwnd);
+        // 备用：模拟 Alt 键抬升，解除前台锁定后再次激活
+        keybd_event(0x12 /* VK_MENU */, 0, 0, 0);
+        keybd_event(0x12, 0, 2 /* KEYEVENTF_KEYUP */, 0);
+        let _ = SetForegroundWindow(hwnd);
+        let _ = SetActiveWindow(hwnd);
+    }
+}
+
+/// 发送 Ctrl+V（粘贴到当前前台窗口的插入点）
+#[cfg(windows)]
+fn send_ctrl_v() {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn keybd_event(bVk: u8, bScan: u8, dwFlags: u32, dwExtraInfo: usize);
+    }
+    unsafe {
+        keybd_event(0x11 /* VK_CONTROL */, 0, 0, 0);
+        keybd_event(0x56 /* 'V' VK */, 0, 0, 0);
+        keybd_event(0x56, 0, 2 /* KEYEVENTF_KEYUP */, 0);
+        keybd_event(0x11, 0, 2, 0);
+    }
+}
+
+/// 单击行为「复制并粘贴」完整流程（Windows）：
+/// 隐藏主窗口 → 恢复呼出前的原前台窗口与光标 → 模拟 Ctrl+V 粘贴。
+/// file 内容不支持自动粘贴（资源管理器 Ctrl+V 语义是复制文件而非本文本），降级为仅复制。
+/// 任何一步失败只影响粘贴，不影响「内容已复制进剪贴板」的事实（前端兜底仅复制）。
+#[cfg(windows)]
+pub fn do_paste_back(app: &AppHandle, content_kind: &str) {
+    if content_kind == "file" {
+        if let Some(w) = app.get_window(MAIN_LABEL) {
+            let _ = w.set_skip_taskbar(true);
+            let _ = w.hide();
+        }
+        return;
+    }
+    let _ = try_paste_win(app);
+}
+
+#[cfg(windows)]
+fn try_paste_win(app: &AppHandle) -> Result<(), String> {
+    // 1) 隐藏主窗口（自己先让出前台）
+    if let Some(w) = app.get_window(MAIN_LABEL) {
+        let _ = w.set_skip_taskbar(true);
+        let _ = w.hide();
+    }
+    std::thread::sleep(Duration::from_millis(80));
+    // 2) 取呼出前记录的上文；无有效上文（如开机首启未呼出过）→ 退回仅复制
+    let ctx = match *LAST_INPUT.lock().unwrap() {
+        Some(c) => c,
+        None => return Ok(()),
+    };
+    if !is_hwnd_alive(ctx.hwnd) {
+        return Ok(());
+    }
+    // 3) 恢复焦点 → 光标归位 → Ctrl+V
+    force_foreground(ctx.hwnd);
+    std::thread::sleep(Duration::from_millis(80));
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn SetCursorPos(x: i32, y: i32) -> i32;
+    }
+    unsafe {
+        let _ = SetCursorPos(ctx.x, ctx.y);
+    }
+    std::thread::sleep(Duration::from_millis(80));
+    send_ctrl_v();
+    Ok(())
+}
+
+/// Linux（麒麟/UOS）：无「恢复焦点自动粘贴」语义，仅隐藏主窗口（退回仅复制）
+#[cfg(not(windows))]
+pub fn do_paste_back(app: &AppHandle, _content_kind: &str) {
+    if let Some(w) = app.get_window(MAIN_LABEL) {
+        let _ = w.set_skip_taskbar(true);
+        let _ = w.hide();
     }
 }
 
