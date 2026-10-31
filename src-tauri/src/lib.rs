@@ -168,7 +168,6 @@ pub fn run() {
             net::net_save_dir,
             net::net_accept,
             net::net_reject,
-            net::net_cancel_rcv,
             net::net_send,
             net::net_send_text,
             net::net_cancel_send,

@@ -328,7 +328,6 @@ class LocalSendService extends ChangeNotifier {
     final info = (v['info'] as Map<String, dynamic>?) ?? {};
     final senderIp = req.connectionInfo?.remoteAddress.address ?? '';
     final senderAlias = (info['alias'] as String?) ?? '?';
-    final senderPort = (info['port'] as num?)?.toInt() ?? kPort;
     final sessionId = _genUuid();
     final files = <IncomingFile>[];
     (v['files'] as Map).forEach((k, fv) {
@@ -338,7 +337,6 @@ class LocalSendService extends ChangeNotifier {
       sessionId: sessionId,
       senderIp: senderIp,
       senderAlias: senderAlias,
-      senderPort: senderPort,
       files: files,
       state: 'Pending',
       createdAt: DateTime.now(),
@@ -600,7 +598,7 @@ class LocalSendService extends ChangeNotifier {
       sess.state = 'Canceled';
       try {
         await _postWithTimeout(
-          'http://${sess.senderIp}:${sess.senderPort}/api/localsend/v2/cancel?sessionId=$sessionId',
+          'http://${sess.senderIp}:$kPort/api/localsend/v2/cancel?sessionId=$sessionId',
           '',
           const Duration(seconds: 5),
         );

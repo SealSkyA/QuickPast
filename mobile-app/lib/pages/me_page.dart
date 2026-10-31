@@ -441,7 +441,7 @@ class _MePageState extends State<MePage> {
             children: [
               const Text('更新日志', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
               const SizedBox(height: 10),
-              Text('v0.2.18 · 与电脑端 0.2.18 合并发布\nv0.2.17 · 后台恢复自动重连发现；设备收藏；打开目录直达文件管理；菜单黄线修复\nv0.2.16 · 在线检查更新、下拉菜单不再被遮挡、界面主题可切换\nv0.2.15 · 品牌更名 QuickCopy、图标改色\nv0.2.13 · 手机端初版，支持收发文件与文本',
+              Text('v0.3.0 · 与电脑端 0.3.0 统一发布\nv0.2.18 · 与电脑端 0.2.18 合并发布\nv0.2.17 · 后台恢复自动重连发现；设备收藏；打开目录直达文件管理；菜单黄线修复\nv0.2.16 · 在线检查更新、下拉菜单不再被遮挡、界面主题可切换\nv0.2.15 · 品牌更名 QuickCopy、图标改色\nv0.2.13 · 手机端初版，支持收发文件与文本',
                   style: TextStyle(fontSize: 12.5, color: kMut, height: 1.7)),
             ],
           ),

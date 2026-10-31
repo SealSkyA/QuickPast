@@ -23,7 +23,7 @@ const double kRR = 12;       // 组件圆角
 const double kRadiusCapsule = 999;
 
 /// 当前应用版本（升级时与 pubspec.yaml 的 version 同步维护）
-const String kAppVersion = '0.2.18';
+const String kAppVersion = '0.3.0';
 
 // 双层阴影（凸起）——按当前 token 实时重算，亮/暗主题自动适配
 List<BoxShadow> get kUp => [
