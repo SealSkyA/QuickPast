@@ -511,7 +511,15 @@ pub fn snapshot_last_input() {
     unsafe {
         let fg = GetForegroundWindow();
         if fg != 0 && GetCursorPos(&mut pt) != 0 {
+            hlog(&format!(
+                "snapshot_last_input: hwnd={fg:#x} '{}' pos=({},{})",
+                window_title(fg),
+                pt.x,
+                pt.y
+            ));
             *LAST_INPUT.lock().unwrap() = Some(InputCtx { hwnd: fg, x: pt.x, y: pt.y });
+        } else {
+            hlog(&format!("snapshot_last_input: SKIP fg={fg:#x} curp_ok={}", GetCursorPos(&mut pt) != 0));
         }
     }
 }
@@ -528,49 +536,284 @@ fn is_hwnd_alive(hwnd: isize) -> bool {
     unsafe { IsWindow(hwnd) != 0 }
 }
 
-/// 把前台交给指定窗口：AttachThreadInput（同窗口线程树）+ 模拟一次 Alt 键
-/// 绕过 Windows 前台锁定，随后再 SetForegroundWindow 双保险。
+/// 取窗口标题（诊断用：确认记录/讨论的目标窗口确实是用户输入窗口）
+#[cfg(windows)]
+fn window_title(hwnd: isize) -> String {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetWindowTextLengthW(hWnd: isize) -> i32;
+        fn GetWindowTextW(hWnd: isize, lpString: *mut u16, nMaxCount: i32) -> i32;
+    }
+    unsafe {
+        let n = GetWindowTextLengthW(hwnd);
+        if n <= 0 {
+            return "(无标题)".to_string();
+        }
+        let mut buf = vec![0u16; (n + 1) as usize];
+        let got = GetWindowTextW(hwnd, buf.as_mut_ptr(), n + 1);
+        String::from_utf16_lossy(&buf[..got as usize])
+    }
+}
+
+/// 把前台交给指定窗口：AttachThreadInput（同窗口线程树）+ SetForegroundWindow。
+/// 注意：不能模拟 Alt 键（会激活目标窗口菜单栏的键盘轨道，吃掉后续 Ctrl+V）；
+/// 跨进程 SetFocus/SetActiveWindow 本就不生效，一律不做。
 #[cfg(windows)]
 fn force_foreground(hwnd: isize) {
+    #[repr(C)]
+    struct RECT {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    }
+    #[repr(C)]
+    struct GUITHREADINFO {
+        cb_size: u32,
+        flags: u32,
+        hwnd_active: isize,
+        hwnd_focus: isize,
+        hwnd_capture: isize,
+        hwnd_menu_owner: isize,
+        hwnd_move_size: isize,
+        hwnd_caret: isize,
+        rc_caret: RECT,
+    }
     #[link(name = "user32")]
     unsafe extern "system" {
         fn GetForegroundWindow() -> isize;
         fn GetWindowThreadProcessId(hwnd: isize, lpdwProcessId: *mut u32) -> u32;
         fn AttachThreadInput(idAttach: u32, idAttachTo: u32, fAttach: i32) -> i32;
         fn SetForegroundWindow(hwnd: isize) -> i32;
-        fn SetActiveWindow(hwnd: isize) -> isize;
-        fn keybd_event(bVk: u8, bScan: u8, dwFlags: u32, dwExtraInfo: usize);
+        fn GetGUIThreadInfo(idThread: u32, lpgui: *mut GUITHREADINFO) -> i32;
+        fn IsChild(hWndParent: isize, hWnd: isize) -> i32;
     }
     unsafe {
         let fg = GetForegroundWindow();
+        hlog(&format!(
+            "force_foreground: target={hwnd:#x} '{}' cur_fg={fg:#x} '{}'",
+            window_title(hwnd),
+            window_title(fg)
+        ));
         let t1 = GetWindowThreadProcessId(fg, std::ptr::null_mut());
         let t2 = GetWindowThreadProcessId(hwnd, std::ptr::null_mut());
         if t1 != 0 && t2 != 0 && t1 != t2 {
             let _ = AttachThreadInput(t1, t2, 1);
             let _ = SetForegroundWindow(hwnd);
             let _ = AttachThreadInput(t1, t2, 0);
+        } else {
+            let _ = SetForegroundWindow(hwnd);
         }
-        let _ = SetForegroundWindow(hwnd);
-        // 备用：模拟 Alt 键抬升，解除前台锁定后再次激活
-        keybd_event(0x12 /* VK_MENU */, 0, 0, 0);
-        keybd_event(0x12, 0, 2 /* KEYEVENTF_KEYUP */, 0);
-        let _ = SetForegroundWindow(hwnd);
-        let _ = SetActiveWindow(hwnd);
+        if GetForegroundWindow() != hwnd {
+            let _ = SetForegroundWindow(hwnd);
+        }
+        // 轮询等待：最多 2s 等前台真正切到目标（WebView/compositor 可能延迟抢占）
+        for _ in 0..100 {
+            if GetForegroundWindow() == hwnd {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+            let _ = SetForegroundWindow(hwnd);
+        }
+        // 探查目标线程的键盘焦点（GetFocus/SetFocus 跨进程无效，只能读对方线程的焦点）
+        let mut gui = GUITHREADINFO {
+            cb_size: std::mem::size_of::<GUITHREADINFO>() as u32,
+            flags: 0,
+            hwnd_active: 0,
+            hwnd_focus: 0,
+            hwnd_capture: 0,
+            hwnd_menu_owner: 0,
+            hwnd_move_size: 0,
+            hwnd_caret: 0,
+            rc_caret: RECT { left: 0, top: 0, right: 0, bottom: 0 },
+        };
+        let got = GetGUIThreadInfo(t2, &mut gui);
+        let in_tree = IsChild(hwnd, gui.hwnd_focus) != 0 || gui.hwnd_focus == hwnd;
+        hlog(&format!(
+            "force_foreground: fg_now={:#x} gui_ok={} focus={:#x} '{}' in_tree={}",
+            GetForegroundWindow(),
+            got != 0,
+            gui.hwnd_focus,
+            window_title(gui.hwnd_focus),
+            in_tree
+        ));
+        if GetForegroundWindow() != hwnd {
+            hlog(&format!("force_foreground: TIMEOUT fg={:#x}", GetForegroundWindow()));
+        }
     }
 }
 
-/// 发送 Ctrl+V（粘贴到当前前台窗口的插入点）
+/* ────────────── SendInput 模拟输入（Windows） ────────────── */
+// Win32 INPUT 结构：union 必须包含最大成员 MOUSEINPUT(32B)，否则 INPUT 大小
+// 不符（正确 40B），SendInput 校验失败返回 0，事件一个都发不出去。
+#[cfg(windows)]
+#[allow(non_snake_case)]
+#[repr(C)]
+struct KEYBDINPUT {
+    wVk: u16,
+    wScan: u16,
+    dwFlags: u32,
+    time: u32,
+    dwExtraInfo: usize,
+}
+#[cfg(windows)]
+#[allow(non_snake_case)]
+#[repr(C)]
+struct MOUSEINPUT {
+    dx: i32,
+    dy: i32,
+    mouseData: u32,
+    dwFlags: u32,
+    time: u32,
+    dwExtraInfo: usize,
+}
+#[cfg(windows)]
+#[allow(non_snake_case)]
+#[repr(C)]
+struct HARDWAREINPUT {
+    uMsg: u32,
+    wParamL: u16,
+    wParamH: u16,
+}
+#[cfg(windows)]
+#[repr(C)]
+union InUn {
+    mi: std::mem::ManuallyDrop<MOUSEINPUT>,
+    ki: std::mem::ManuallyDrop<KEYBDINPUT>,
+    hi: std::mem::ManuallyDrop<HARDWAREINPUT>,
+}
+#[cfg(windows)]
+#[repr(C)]
+struct INPUT {
+    ty: u32,
+    u: InUn,
+}
+#[cfg(windows)]
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn SendInput(cInputs: u32, pInputs: *mut INPUT, cbSize: i32) -> u32;
+    fn GetLastError() -> u32;
+}
+
+/// 发送 Ctrl+<key>（粘贴到当前前台窗口的插入点）。用 SendInput 逐键模拟，比
+/// keybd_event 更接近真实键盘，且对前台限制类输入更可靠。
+#[cfg(windows)]
+fn send_combo(key_vk: u16, tag: &str) {
+    let key = |vk: u16, flags: u32| INPUT {
+        ty: 1, // INPUT_KEYBOARD
+        u: InUn {
+            ki: std::mem::ManuallyDrop::new(KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            }),
+        },
+    };
+    let mut evts = [
+        key(0x11 /* VK_CONTROL */, 0),
+        key(key_vk, 0),
+        key(key_vk, 2 /* KEYEVENTF_KEYUP */),
+        key(0x11, 2),
+    ];
+    unsafe {
+        let sent = SendInput(
+            evts.len() as u32,
+            evts.as_mut_ptr(),
+            std::mem::size_of::<INPUT>() as i32,
+        );
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn GetForegroundWindow() -> isize;
+        }
+        hlog(&format!(
+            "send_combo[{tag}]: sent={} last_err={} input_size={} fg_after={:#x} '{}'",
+            sent,
+            GetLastError(),
+            std::mem::size_of::<INPUT>(),
+            GetForegroundWindow(),
+            window_title(GetForegroundWindow())
+        ));
+    }
+}
+
 #[cfg(windows)]
 fn send_ctrl_v() {
+    send_combo(0x56 /* 'V' */, "V");
+}
+
+#[cfg(windows)]
+fn send_ctrl_l() {
+    send_combo(0x4C /* 'L' */, "L");
+}
+
+/// 判断窗口是否属于文件资源管理器（explorer.exe）。Shell 窗口激活后焦点不会
+/// 自动落在地址栏/搜索框，需特殊处理（归位后补一次单击聚焦）。
+#[cfg(windows)]
+fn is_explorer_hwnd(hwnd: isize) -> bool {
     #[link(name = "user32")]
     unsafe extern "system" {
-        fn keybd_event(bVk: u8, bScan: u8, dwFlags: u32, dwExtraInfo: usize);
+        fn GetWindowThreadProcessId(hwnd: isize, lpdwProcessId: *mut u32) -> u32;
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OpenProcess(dwDesiredAccess: u32, bInheritHandle: i32, dwProcessId: u32) -> isize;
+        fn QueryFullProcessImageNameW(
+            hProcess: isize,
+            dwFlags: u32,
+            lpExeName: *mut u16,
+            lpdwSize: *mut u32,
+        ) -> i32;
+        fn CloseHandle(hObject: isize) -> i32;
     }
     unsafe {
-        keybd_event(0x11 /* VK_CONTROL */, 0, 0, 0);
-        keybd_event(0x56 /* 'V' VK */, 0, 0, 0);
-        keybd_event(0x56, 0, 2 /* KEYEVENTF_KEYUP */, 0);
-        keybd_event(0x11, 0, 2, 0);
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == 0 {
+            return false;
+        }
+        let h = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, 0, pid);
+        if h == 0 {
+            hlog(&format!("is_explorer_hwnd: open fail pid={}", pid));
+            return false;
+        }
+        let mut buf = [0u16; 1024];
+        let mut sz = 1024u32;
+        let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut sz);
+        CloseHandle(h);
+        if ok == 0 {
+            return false;
+        }
+        let s = String::from_utf16_lossy(&buf[..sz as usize]);
+        let name = s.rsplit(['\\', '/']).next().unwrap_or("");
+        let is_ex = name.eq_ignore_ascii_case("explorer.exe");
+        hlog(&format!("is_explorer_hwnd: pid={} exe='{}' => {}", pid, name, is_ex));
+        is_ex
+    }
+}
+
+/// 隐藏主窗口并同步确认（Tauri 1 的 hide 为消息投递，UI 线程繁忙时可能延迟
+/// 生效；轮询等待窗口真正不可见，仍可见则重试一次）。
+#[cfg(windows)]
+fn hide_main(app: &AppHandle) {
+    if let Some(w) = app.get_window(MAIN_LABEL) {
+        let _ = w.set_skip_taskbar(true);
+        let _ = w.hide();
+        for _ in 0..50 {
+            if w.is_visible().unwrap_or(false) == false {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = w.hide(); // 再试一次（异步消息可能被 UI 线程积压）
+        for _ in 0..50 {
+            if w.is_visible().unwrap_or(false) == false {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        hlog("hide_main: 窗口 2s 内仍未隐藏（warn）");
     }
 }
 
@@ -581,10 +824,7 @@ fn send_ctrl_v() {
 #[cfg(windows)]
 pub fn do_paste_back(app: &AppHandle, content_kind: &str) {
     if content_kind == "file" {
-        if let Some(w) = app.get_window(MAIN_LABEL) {
-            let _ = w.set_skip_taskbar(true);
-            let _ = w.hide();
-        }
+        hide_main(app);
         return;
     }
     let _ = try_paste_win(app);
@@ -593,17 +833,19 @@ pub fn do_paste_back(app: &AppHandle, content_kind: &str) {
 #[cfg(windows)]
 fn try_paste_win(app: &AppHandle) -> Result<(), String> {
     // 1) 隐藏主窗口（自己先让出前台）
-    if let Some(w) = app.get_window(MAIN_LABEL) {
-        let _ = w.set_skip_taskbar(true);
-        let _ = w.hide();
-    }
+    hide_main(app);
     std::thread::sleep(Duration::from_millis(80));
     // 2) 取呼出前记录的上文；无有效上文（如开机首启未呼出过）→ 退回仅复制
     let ctx = match *LAST_INPUT.lock().unwrap() {
         Some(c) => c,
-        None => return Ok(()),
+        None => {
+            hlog("paste: NO last-input context → copy only");
+            return Ok(());
+        }
     };
+    hlog(&format!("paste: ctx hwnd={:#x} pos=({},{})", ctx.hwnd, ctx.x, ctx.y));
     if !is_hwnd_alive(ctx.hwnd) {
+        hlog("paste: target window dead → copy only");
         return Ok(());
     }
     // 3) 恢复焦点 → 光标归位 → Ctrl+V
@@ -616,8 +858,16 @@ fn try_paste_win(app: &AppHandle) -> Result<(), String> {
     unsafe {
         let _ = SetCursorPos(ctx.x, ctx.y);
     }
-    std::thread::sleep(Duration::from_millis(80));
+    std::thread::sleep(Duration::from_millis(50));
+    // 文件资源管理器（explorer.exe）：恢复前台后焦点不会自动落进地址栏，
+    // 用 Ctrl+L 把地址栏聚焦出来再粘贴。不能派鼠标单击——记录坐标在呼出窗口
+    // 覆盖关系下可能点丢前台（实测会切去桌面，Ctrl+V 被桌面吃掉）。
+    if is_explorer_hwnd(ctx.hwnd) {
+        send_ctrl_l();
+        std::thread::sleep(Duration::from_millis(120));
+    }
     send_ctrl_v();
+    hlog("paste: done");
     Ok(())
 }
 
