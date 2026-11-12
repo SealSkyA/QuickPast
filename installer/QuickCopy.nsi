@@ -55,6 +55,7 @@ Page custom BootPageCreate BootPageLeave "开机自启"
 
 ; ═══════════ 开机自启选项页（默认勾选 = 静默模式） ═══════════
 Var BootAutoCheck
+Var DeskShortcutCheck
 
 Function BootPageCreate
   nsDialogs::Create 1018
@@ -69,6 +70,9 @@ Function BootPageCreate
   ${NSD_CreateCheckBox} 0 62u 100% 24u "开机自启（静默模式）"
   Pop $BootAutoCheck
   ${NSD_SetState} $BootAutoCheck ${BST_CHECKED}
+  ${NSD_CreateCheckBox} 0 80u 100% 20u "创建桌面快捷方式（同时创建开始菜单快捷方式）"
+  Pop $DeskShortcutCheck
+  ${NSD_SetState} $DeskShortcutCheck ${BST_CHECKED}
   nsDialogs::Show
 FunctionEnd
 
@@ -107,6 +111,16 @@ Section "主程序" SecMain
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
 
+  ; 桌面快捷方式：安装选项页勾选（静默安装默认创建）
+  ${If} $DeskShortcutCheck != ""
+    ${NSD_GetState} $DeskShortcutCheck $0
+  ${Else}
+    StrCpy $0 ${BST_CHECKED}
+  ${EndIf}
+  ${If} $0 == ${BST_CHECKED}
+    CreateShortCut "$DESKTOP\${PRODUCT_NAME}.lnk" "$INSTDIR\${EXE_NAME}" "" "$INSTDIR\${EXE_NAME}" 0
+  ${EndIf}
+
   ; 开始菜单快捷方式
   CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
   CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\${PRODUCT_NAME}.lnk" "$INSTDIR\${EXE_NAME}" "" "$INSTDIR\${EXE_NAME}" 0
@@ -118,6 +132,7 @@ Section Uninstall
   nsExec::ExecToLog 'taskkill /F /IM QuickCopy.exe'
   DeleteRegValue HKCU "${RUN_KEY}" "${APP_NAME}"
   DeleteRegKey HKCU "${UNINST_KEY}"
+  Delete "$DESKTOP\${PRODUCT_NAME}.lnk"
   Delete "$SMPROGRAMS\${PRODUCT_NAME}\${PRODUCT_NAME}.lnk"
   RMDir "$SMPROGRAMS\${PRODUCT_NAME}"
   RMDir /r "$INSTDIR"
