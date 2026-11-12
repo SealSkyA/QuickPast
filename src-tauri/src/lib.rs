@@ -182,6 +182,8 @@ pub fn run() {
         .setup(move |app| {
             // 数据迁移：旧版本数据在 C 盘 AppData，新版本统一存安装路径 → 一次性复制
             migrate_data(&app.handle());
+            // 开机自启设置初始化：旧布尔值迁移 + 首启时按系统实际状态对齐（NSIS 安装器勾选过静默自启）
+            crate::cmds::ensure_autostart_setting(&app.handle());
             // 单实例：维持独占监听，后续启动实例在此处呼出主窗口
             single::spawn_wake_listener(app.handle().clone(), listener);
             // S1 剪贴板历史：载入持久化数据（含存量去重）并启动监听

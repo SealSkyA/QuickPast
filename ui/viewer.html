@@ -98,13 +98,28 @@ function toast(msg, err){
 }
 function winMin(){ win.minimize().catch(()=>{}); }
 function winMax(){ win.toggleMaximize().catch(()=>{}); }
-function closeWin(){ win.hide().catch(()=>{}); }
+function closeWin(){ saveViewerState(); win.hide().catch(()=>{}); }
+// 查看状态记忆（localStorage 持久化，跨会话/窗口复用：缩放与滚动偏移）
+const LS_STATE = 'qp_viewer_state';
+function loadViewerState(){
+  try { return JSON.parse(localStorage.getItem(LS_STATE)) || {}; } catch(e){ return {}; }
+}
+function saveViewerState(){
+  const w = document.getElementById('imgWrap');
+  try {
+    localStorage.setItem(LS_STATE, JSON.stringify({
+      zoomed: w.classList.contains('zoomed') ? 1 : 0,
+      sl: w.scrollLeft, st: w.scrollTop
+    }));
+  } catch(e){ /* 忽略存储失败 */ }
+}
 function toggleZoom(){
   const wrap = document.getElementById('imgWrap');
   const im = document.getElementById('viewImg');
   wrap.classList.toggle('zoomed');
   im.classList.toggle('zoomed');
   if(wrap.classList.contains('zoomed')){ wrap.scrollLeft = 0; wrap.scrollTop = 0; }
+  saveViewerState();
 }
 // 放大后拖拽平移查看（按住左键拖动图片）
 let _drag = null;   // {sx,sy,sl,st}
@@ -125,6 +140,7 @@ window.addEventListener('mouseup', e => {
   const moved = Math.abs(e.clientX - _drag.sx) + Math.abs(e.clientY - _drag.sy);
   wrapEl.classList.remove('dragging');
   _drag = null;
+  saveViewerState();
   // 位移大视为拖动，不触发还原缩放
   if(moved > 6) document.getElementById('viewImg')._skipClick = true;
 });
@@ -142,12 +158,25 @@ function showImage(id, name){
   wrap.classList.remove('zoomed');
   im.classList.remove('zoomed');
   im.removeAttribute('src');
+  const st = loadViewerState();
   const fn = document.getElementById('fname');
   if(fn) fn.textContent = name || ('图片 #' + id);
   invoke('clip_img_full', { id: Number(id) })
     .then(b => {
       b64 = b || '';
-      if(b64){ im.src = 'data:image/png;base64,' + b64; }
+      if(b64){
+        im.src = 'data:image/png;base64,' + b64;
+        // 图片就绪后恢复上次的缩放与滚动位置
+        im.onload = () => {
+          if(st.zoomed){
+            wrap.classList.add('zoomed');
+            im.classList.add('zoomed');
+            wrap.scrollLeft = st.sl || 0;
+            wrap.scrollTop = st.st || 0;
+          }
+        };
+        if(im.complete && im.naturalWidth) im.onload();
+      }
       else { toast('图片内容读取失败', true); }
     })
     .catch(()=>{ toast('图片内容读取失败', true); });

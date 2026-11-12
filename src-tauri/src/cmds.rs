@@ -101,16 +101,24 @@ pub fn qp_paste_pending(app: AppHandle, content_kind: String) -> Result<(), Stri
     Ok(())
 }
 
-/// 开机自启开关：写入设置并立即生效。Windows 写注册表 Run 键；Linux（麒麟/UOS）写
+/// 开机自启设置：mode 为 "off"（关闭）/ "silent"（静默：开机不显示界面，仅托盘常驻）/
+/// "front"（前台：开机后弹出主界面）。Windows 写注册表 Run 键；Linux（麒麟/UOS）写
 /// XDG autostart 的 .desktop（~/.config/autostart/），两个发行版都遵循标准。
-/// 自启启动附带 --hidden 参数 → 开机时静默运行（托盘常驻）；手动双击启动仍正常显示窗口。
+/// silent 自启启动附带 --hidden 参数 → 开机时静默运行（托盘常驻）；front 不带参数 → 正常显示窗口。
 #[tauri::command]
-pub fn qp_set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
+pub fn qp_set_autostart(app: AppHandle, mode: String) -> Result<(), String> {
+    let mode = match mode.as_str() {
+        "front" => "front",
+        "silent" => "silent",
+        _ => "off",
+    };
+    let on = mode != "off";
     #[cfg(windows)]
     {
         // 清理历史遗留的旧名称自启项（QuickPaste 品牌改名前的残留）：
         // 改名前写入的值名是 QuickPaste，指向的 exe 路径已失效/被覆盖，
         // 不清理会造成开机尝试启动失效路径、多实例并存等“时好时坏”现象。
+        // 注意：同样用 .spawn() 不等待——见下方 IPC 挂起陷阱说明。
         let _ = std::process::Command::new("reg")
             .args([
                 "delete",
@@ -119,7 +127,7 @@ pub fn qp_set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
                 "QuickPaste",
                 "/f",
             ])
-            .output();
+            .spawn();
         if on {
             // 优先使用安装目录的正式程序（NSIS currentUser：%LOCALAPPDATA%\QuickCopy\QuickCopy.exe），
             // 该路径稳定、不会被 cargo 构建清理；只有在未安装时才回退到 current_exe
@@ -134,8 +142,18 @@ pub fn qp_set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
                     None => std::env::current_exe().map_err(|e| e.to_string())?,
                 }
             };
-            let cmd = format!("\"{}\" --hidden", exe.to_string_lossy());
-            let out = std::process::Command::new("reg")
+            // silent 带 --hidden（开机后台静默、仅托盘）；front 不带参数（开机显示主界面）
+            let cmd = if mode == "silent" {
+                format!("\"{}\" --hidden", exe.to_string_lossy())
+            } else {
+                format!("\"{}\"", exe.to_string_lossy())
+            };
+            // 关键陷阱：不能用 .output() 等待子进程退出。WebView2 环境下从前端
+            // fire-and-forget 调用的 invoke（前端无 await 持有 promise），其命令在线程中
+            // 执行到 wait_with_output 会永久挂起（writeln 日志验证卡在输出读取前），
+            // 导致注册表从不写入、invoke 永不 resolve。reg.exe 为独立进程，
+            // .spawn() 即返回，由系统异步完成写入（详见 docs/技术陷阱记录.md）。
+            std::process::Command::new("reg")
                 .args([
                     "add",
                     "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
@@ -145,12 +163,10 @@ pub fn qp_set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
                     &cmd,
                     "/f",
                 ])
-                .output()
-                .map_err(|e| e.to_string())?;
-            if !out.status.success() {
-                return Err("写入开机自启注册表失败".to_string());
-            }
+                .spawn()
+                .map_err(|e| format!("启动 reg 写入开机自启失败：{e}"))?;
         } else {
+            // 同上：不等待子进程退出，避免 IPC 上下文挂起
             let _ = std::process::Command::new("reg")
                 .args([
                     "delete",
@@ -159,7 +175,7 @@ pub fn qp_set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
                     "QuickCopy",
                     "/f",
                 ])
-                .output();
+                .spawn();
         }
     }
     #[cfg(not(windows))]
@@ -172,11 +188,15 @@ pub fn qp_set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
         if on {
             let exe = std::env::current_exe().map_err(|e| e.to_string())?;
             std::fs::create_dir_all(&dir).map_err(|e| format!("创建自启目录失败：{e}"))?;
+            let exec = if mode == "silent" {
+                format!("\"{}\" --hidden", exe.to_string_lossy())
+            } else {
+                format!("\"{}\"", exe.to_string_lossy())
+            };
             std::fs::write(
                 &file,
                 format!(
-                    "[Desktop Entry]\nType=Application\nName=QuickCopy\nExec=\"{}\" --hidden\nComment=局域网剪贴板历史与文件互传\n",
-                    exe.to_string_lossy()
+                    "[Desktop Entry]\nType=Application\nName=QuickCopy\nExec={exec}\nComment=局域网剪贴板历史与文件互传\n",
                 ),
             )
             .map_err(|e| format!("写自启文件失败：{e}"))?;
@@ -184,7 +204,65 @@ pub fn qp_set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
             let _ = std::fs::remove_file(&file);
         }
     }
-    settings::set_key(&app, "autostart", Value::Bool(on)).map_err(|e| e.to_string())
+    settings::set_key(&app, "autostart", Value::String(mode.into())).map_err(|e| e.to_string())
+}
+
+/// 读取系统当前开机自启状态（只读，不改写）：返回 "silent" / "front" / None（未开启）。
+/// Windows：解析注册表 Run 键 QuickCopy 的值是否带 --hidden；
+/// Linux：解析 ~/.config/autostart/QuickCopy.desktop 的 Exec 行。
+pub fn autostart_detect_system() -> Option<String> {
+    #[cfg(windows)]
+    {
+        let out = std::process::Command::new("reg")
+            .args([
+                "query",
+                "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                "/v",
+                "QuickCopy",
+            ])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).to_string();
+        if s.contains("QuickCopy.exe") {
+            return Some(if s.contains("--hidden") { "silent" } else { "front" }.into());
+        }
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        let file = std::path::PathBuf::from(
+            std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()),
+        )
+        .join(".config/autostart/QuickCopy.desktop");
+        let s = std::fs::read_to_string(&file).ok()?;
+        if s.lines().any(|l| l.starts_with("Exec=")) {
+            return Some(if s.contains("--hidden") { "silent" } else { "front" }.into());
+        }
+        None
+    }
+}
+
+/// 确保设置里有合法的 autostart 值（启动时调用一次）：
+/// - 旧布尔值迁移：true → "silent"（旧版本自启就是固定带 --hidden 的静默模式）、false → "off"
+/// - 从未设置过（首次安装/首启）：按系统当前实际状态对齐。NSIS 安装器勾选了「开机自启（静默）」
+///   会写注册表 `"<exe>" --hidden` → 这里初始化为 "silent"；安装器取消勾选 → 无注册表项 → "off"。
+pub fn ensure_autostart_setting(app: &tauri::AppHandle) {
+    match settings::get_key(app, "autostart") {
+        Ok(Some(v)) => {
+            if let Some(b) = v.as_bool() {
+                let mode = if b { "silent" } else { "off" };
+                let _ = settings::set_key(app, "autostart", serde_json::json!(mode));
+            }
+        }
+        Ok(None) => {
+            let mode = autostart_detect_system().unwrap_or_else(|| "off".into());
+            let _ = settings::set_key(app, "autostart", serde_json::json!(mode));
+        }
+        Err(_) => {}
+    }
 }
 
 /// 接收任务到达时确保主窗口可见：

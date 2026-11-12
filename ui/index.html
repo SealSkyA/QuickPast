@@ -93,6 +93,8 @@ input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-
 .tbtn{width:34px;height:34px;border-radius:11px;display:flex;align-items:center;justify-content:center;
   color:var(--mut);cursor:pointer;background:none;border:0;transition:.14s}
 .tbtn:hover{box-shadow:var(--up-sm);color:var(--fg)}
+#btnClearSel{display:none}
+#btnClearSel:hover{color:var(--err);box-shadow:var(--up-sm)}
 .tbtn:active{box-shadow:var(--in-sm)}
 .tbtn.active{color:var(--acc);box-shadow:var(--in-sm)}
 
@@ -486,7 +488,9 @@ button:disabled{opacity:.45;box-shadow:none}
           <!-- 发送 -->
           <div class="xview" id="xv-send" style="display:none">
             <div class="xcard">
-              <h3><svg class="ico" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>发送</h3>
+              <h3 style="display:flex;align-items:center;gap:8px"><svg class="ico" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>发送
+                <button class="tbtn" id="btnClearSel" onclick="clearSel()" title="清空已选内容" style="width:30px;height:30px;margin-left:auto"><svg class="ico" viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12z"/><path d="M19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg></button>
+              </h3>
               <div class="chint">先选择发送类型，再勾选附近设备；发送模式决定目标与行为。</div>
               <div class="send-types">
                 <div class="st" onclick="pickType(this,'文件')"><svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>文件</div>
@@ -562,7 +566,12 @@ button:disabled{opacity:.45;box-shadow:none}
         <div class="row"><div class="lbl"><b>单击行为</b><span>点击历史卡片后的动作；「复制并粘贴」会隐藏窗口并粘到呼出前的光标位置</span></div><div class="ctl"><select id="clickBehaviorSel" onchange="clickBehaviorChange()"><option value="paste">复制并粘贴</option><option value="copy">仅复制至剪切板</option></select></div></div>
         <div class="row"><div class="lbl"><b>默认分类</b><span>启动时定位到该分类（默认全部）</span></div><div class="ctl"><select id="defCatSel"><option value="all">全部</option><option value="text">文字</option><option value="img">图片</option><option value="file">文件</option><option value="fav">收藏</option><option value="note">便签</option></select></div></div>
         <div class="row"><div class="lbl"><b>页面字号</b><span>界面文字大小（12 – 20）</span></div><div class="ctl"><input type="number" id="fontSizeSel" value="14" min="12" max="20"></div></div>
-        <div class="row"><div class="lbl"><b>开机自启</b><span>登录 Windows 后自动启动</span></div><div class="ctl"><label class="sw"><input type="checkbox" id="bootSel" onchange="bootChange()"><i></i></label></div></div>
+        <div class="row"><div class="lbl"><b>开机自启</b><span>登录 Windows 后自动启动；静默=仅托盘常驻，前台=弹出主界面</span></div>
+          <div class="ctl"><select id="bootSel" onchange="bootChange()">
+            <option value="off">关闭</option>
+            <option value="front">前台自启</option>
+            <option value="silent" selected>静默启动</option>
+          </select></div></div>
       </div>
       <div class="set" id="set-file">
         <div class="row"><div class="lbl"><b>快速保存</b><span>默认关：他人推送时需点接收</span></div><div class="ctl"><label class="sw"><input type="checkbox" id="fastSave"><i></i></label></div></div>
@@ -703,6 +712,7 @@ const IC = {
   edit:'<path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 3 21l.5-4.5z"/>',
   del:'<path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14"/>',
   save:'<path d="M4 4h13l3 3v13H4z"/><path d="M8 4v5h7V4M8 15h8v5H8z"/>',
+  trash:'<path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12z"/><path d="M19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>',
   open:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1H5a2 2 0 0 0-2 2M3 12v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6"/>',
   x:'<path d="M6 6l12 12M18 6L6 18"/>'
 };
@@ -1551,6 +1561,8 @@ function selIcon(t){
 function renderSel(){
   const box=document.getElementById('selFiles');
   document.getElementById('selHint').style.display = SEL.length ? 'none' : '';
+  const cb=document.getElementById('btnClearSel');
+  if(cb) cb.style.display = SEL.length ? 'flex' : 'none';
   // 大文件夹可能有成千上万项：只渲染前 MAX 个，避免一次性 DOM 渲染阻塞窗口
   const MAX=80;
   const shown = SEL.length>MAX ? SEL.slice(0,MAX) : SEL;
@@ -1558,6 +1570,14 @@ function renderSel(){
   box.innerHTML = shown.map((it,i)=>'<span class="sel-chip">'+svg(selIcon(it.type))+'<b>'+esc(it.name)+'</b><span>'+esc(it.size)+'</span><span class="rm" onclick="removeSel('+i+')">'+svg(IC.x)+'</span></span>').join('') + more;
 }
 function removeSel(i){ SEL.splice(i,1); renderSel(); if(!SEL.length) toast('已清空选择'); }
+/* 一键清空待发送列表（发送标题后的垃圾桶按钮） */
+function clearSel(){
+  const n = SEL.length;
+  if(!n) return;
+  SEL = [];
+  renderSel();
+  toast('已清空 ' + n + ' 项待发送内容');
+}
 function openModeModal(){
   document.getElementById('mask').classList.add('on');
   document.getElementById('m-mode').classList.add('on');
@@ -1869,15 +1889,21 @@ renderList(); renderDevs(); loadFav();
   T.invoke('get_setting', { key: 'net.online' }).then(v => {
     if (typeof window.applyNetOnline === 'function') window.applyNetOnline(v !== false);
   }).catch(() => {});
-  /* —— 开机自启：设置值回填开关；切换时写入设置并实际调用系统自启（注册表 Run 键） —— */
+  /* —— 开机自启：设置值回填下拉；切换时写入设置并实际调用系统自启（注册表 Run 键） —— */
   window.bootChange = function () {
-    const on = !!(document.getElementById('bootSel') && document.getElementById('bootSel').checked);
-    T.invoke('qp_set_autostart', { on: on }).then(() => {
-      if (typeof toast === 'function') toast(on ? '已开启开机自启' : '已关闭开机自启');
+    const v = document.getElementById('bootSel').value;
+    window.QP.invoke('qp_set_autostart', { mode: v }).then(() => {
+      if (typeof toast === 'function') toast(v === 'off' ? '已关闭开机自启' : (v === 'front' ? '已开启：开机后显示主界面' : '已开启：开机后静默运行（仅托盘）'));
     }).catch(() => {});
   };
-  T.invoke('get_setting', { key: 'autostart' }).then(v => {
-    const b = document.getElementById('bootSel'); if (b) b.checked = !!v;
+  window.QP.invoke('get_setting', { key: 'autostart' }).then(v => {
+    const s = document.getElementById('bootSel'); if (!s) return;
+    // 兼容旧布尔值：true=旧版静默自启（固定 --hidden），false=关闭
+    let mode = 'silent';
+    if (v === true) mode = 'silent';
+    else if (v === false) mode = 'off';
+    else if (typeof v === 'string' && (v === 'off' || v === 'front' || v === 'silent')) mode = v;
+    s.value = mode;
   }).catch(() => {});
 
   /* —— S3：接收确认 / 进度（多人同时发送 → 任务队列，一次处理一个，窗口叠加） —— */

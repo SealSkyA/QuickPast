@@ -425,6 +425,15 @@ pub fn spawn_watcher(app: AppHandle) {
                         eprintln!("img save failed: {e}, fallback rgba8");
                         fallback_persist_img(&app, items[0].id, &img);
                     }
+                } else if let Some(p) = items[0].path.clone() {
+                    // 图片文件条目（剪贴板无位图）：从原路径读取快照，保证缩略图/预览可用
+                    if let Ok(im) = image::open(&p) {
+                        let d = img_dir(&app);
+                        let _ = std::fs::create_dir_all(&d);
+                        if let Err(e) = im.save(d.join(format!("{}.png", items[0].id))) {
+                            eprintln!("img file snapshot failed: {e}");
+                        }
+                    }
                 }
             }
             _ => {}
@@ -441,6 +450,21 @@ pub fn spawn_watcher(app: AppHandle) {
             serde_json::json!({ "item": emit_item, "removed": pruned }),
         );
     });
+}
+
+/// 是否为常见位图扩展名。复制"图片文件"（如资源管理器复制 png）时剪贴板
+/// 只有文件路径没有位图，按扩展名识别并归入图片分类，缩略图/预览才可用。
+fn is_img_file(p: &str) -> bool {
+    std::path::Path::new(p)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .map(|e| {
+            matches!(
+                e.as_str(),
+                "png" | "jpg" | "jpeg" | "bmp" | "gif" | "webp" | "ico" | "avif"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn poll_once(
@@ -474,6 +498,33 @@ fn poll_once(
     // 文件（复制文件时剪贴板也可能带文本路径）
     if let Ok(files) = ctx.get_files() {
         if !files.is_empty() {
+            // 单个图片文件（剪贴板无位图，如资源管理器复制 png）→ 归入图片分类，
+            // 解码快照保证缩略图/预览可用；非图片或多文件仍按文件收录
+            if files.len() == 1 && is_img_file(&files[0]) {
+                if let Ok(im) = image::open(&files[0]) {
+                    let (w, h) = (im.width(), im.height());
+                    let raw = im.to_rgba8().into_raw();
+                    let csize = std::fs::metadata(&files[0]).map(|m| m.len()).unwrap_or(0);
+                    let name = PathBuf::from(&files[0])
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    return Some((
+                        ClipKey::Img(raw.clone()),
+                        Item {
+                            cat: "img".into(),
+                            name: Some(name),
+                            res: Some(format!("{w} × {h}")),
+                            size: Some(fmt_size(csize)),
+                            sha: Some(rgba_sha256(&raw)),
+                            path: Some(files[0].clone()),
+                            ..Default::default()
+                        },
+                        None,
+                        None,
+                    ));
+                }
+            }
             let total = files
                 .iter()
                 .map(|f| std::fs::metadata(f).map(|m| m.len()).unwrap_or(0))
