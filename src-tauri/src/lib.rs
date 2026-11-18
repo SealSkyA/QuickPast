@@ -466,6 +466,9 @@ fn toggle_main(app: &AppHandle, show_taskbar: bool) {
         } else {
             // 「复制并粘贴」：记录呼出前的输入上下文（前台窗口+光标），必须在本窗口 show 之前
             snapshot_last_input();
+            // 唤醒前恢复保存的几何：静默启动（--hidden）不 restore、窗口停在 tauri.conf 默认布局，
+            // 只有这里应用 window.geometry 才能恢复到用户上次的窗口位置/大小
+            apply_geometry(app);
             let _ = w.unminimize(); // 从任务栏/最小化状态还原
             let _ = w.show();
             // 快捷键呼出：任务栏不显示图标（只留托盘）；单击托盘呼出：任务栏图标正常显示
@@ -930,6 +933,21 @@ fn restore_geometry(app: &mut App) -> tauri::Result<()> {
     let _ = w.show();
     let _ = w.set_focus();
     Ok(())
+}
+
+/// 仅把主窗口恢复到保存的几何（位置+尺寸），不显示窗口。
+/// 供托盘/热键唤醒（toggle_main）调用：静默启动（--hidden）不 restore、
+/// 窗口停在 tauri.conf 默认布局，唤醒时需恢复到用户上次布局。
+/// 与 restore_geometry 相同的有效性与安全性校验；无有效保存值时保持现状（默认居中）。
+fn apply_geometry(app: &AppHandle) {
+    let Some(w) = app.get_window(MAIN_LABEL) else { return };
+    let geo = settings::get_key(app, GEOM_KEY).ok().flatten();
+    if let Some(g) = geo.and_then(|v| serde_json::from_value::<GeomValue>(v).ok()) {
+        if g.w >= 200 && g.h >= 200 && g.x > -20000 && g.y > -20000 {
+            let _ = w.set_size(Size::Physical(PhysicalSize::new(g.w, g.h)));
+            let _ = w.set_position(Position::Physical(PhysicalPosition::new(g.x, g.y)));
+        }
+    }
 }
 
 fn schedule_geom_save(app: AppHandle) {
